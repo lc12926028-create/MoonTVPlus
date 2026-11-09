@@ -29,6 +29,8 @@ const CATEGORY: Record<NetflixType, string> = {
 interface NetflixChartItem {
   id: number;
   title: string;
+  /** TMDB zh-CN 搜索返回的中文译名；搜不到或无译名时为空字符串 */
+  chineseTitle: string;
   poster_path: string | null;
   release_date: string;
   overview: string;
@@ -95,8 +97,10 @@ function parseTop10Tsv(tsv: string, type: NetflixType): { week: string; rows: Ra
 }
 
 /**
- * 用 TMDB 搜片名补海报、评分、年份（尽力而为）。
- * 未配 TMDB Key 或搜不到时返回无海报的条目，榜单本身不受影响。
+ * 用 TMDB 搜片名补海报、评分、年份和中文名（尽力而为）。
+ * searchTMDBMulti 用 language=zh-CN，返回的 title（电影）/ name（剧集）
+ * 就是中文译名；TMDB 无译名时会原样返回英文原名，此时中文名留空。
+ * 未配 TMDB Key 或搜不到时返回无海报、无中文名的条目，榜单本身不受影响。
  */
 async function enrichWithTmdb(
   rows: RawRow[],
@@ -113,10 +117,12 @@ async function enrichWithTmdb(
       vote_average?: number;
       release_date?: string;
       first_air_date?: string;
+      chineseTitle?: string;
     }
   ): NetflixChartItem => ({
     id: tmdb?.id ?? 0,
     title: row.title,
+    chineseTitle: tmdb?.chineseTitle ?? '',
     poster_path: tmdb?.poster_path ?? null,
     release_date: tmdb?.release_date || tmdb?.first_air_date || '',
     overview: '',
@@ -137,7 +143,11 @@ async function enrichWithTmdb(
         const best =
           results.find((r: any) => r.media_type === type) || results[0];
         if (!best) return toItem(row);
-        return toItem(row, best);
+        // TMDB zh-CN 搜索返回的 title（电影）/ name（剧集）即中文译名；
+        // 无译名时 TMDB 会原样返回英文原名——只有含中文字符的才算中文名
+        const zhTitle = String(best.title || best.name || '').trim();
+        const chineseTitle = /[\u4e00-\u9fff]/.test(zhTitle) ? zhTitle : '';
+        return toItem(row, { ...best, chineseTitle });
       } catch {
         return toItem(row);
       }
@@ -151,7 +161,7 @@ async function enrichWithTmdb(
  * - movie：全球英文电影 Top 10（Films (English)）
  * - tv：全球英文剧集 Top 10（TV (English)）
  * 数据来源：Netflix Top 10 官方公开 TSV（https://top10.netflix.com/data/all-weeks-global.tsv），每周二更新。
- * 海报/评分/年份由 TMDB 搜索补齐（未配 Key 时留空，不影响榜单）。
+ * 海报/评分/年份/中文名由 TMDB 搜索补齐（未配 Key 时留空，不影响榜单）。
  */
 export async function GET(request: NextRequest) {
   try {

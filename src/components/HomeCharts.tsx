@@ -18,7 +18,10 @@ import VideoCard from '@/components/VideoCard';
 /** 榜单行统一形状（TMDB / 豆瓣两路数据归一化后都长这样） */
 interface ChartItem {
   key: string;
+  /** 主标题：TMDB/豆瓣榜为中文名，Netflix 榜为英文原名 */
   title: string;
+  /** Netflix 榜专用：TMDB 补齐的中文译名（无译名时为空，主标题只显示英文原名） */
+  chineseTitle?: string;
   poster: string;
   rate: string;
   year: string;
@@ -44,10 +47,11 @@ const CHARTS: ChartDef[] = [
 
 const FALLBACK_NOTE = '（TMDB 未配置或请求失败，已回退到豆瓣「欧美」热门）';
 
-function tmdbToChartItem(item: TMDBItem): ChartItem {
+function tmdbToChartItem(item: TMDBItem & { chineseTitle?: string }): ChartItem {
   return {
     key: `tmdb-${item.media_type}-${item.id}`,
     title: item.title,
+    chineseTitle: item.chineseTitle || '',
     poster: processImageUrl(getTMDBImageUrl(item.poster_path, 'w185')),
     rate: item.vote_average && item.vote_average > 0 ? item.vote_average.toFixed(1) : '',
     year: (item.release_date || '').split('-')[0] || '',
@@ -322,6 +326,11 @@ export default function HomeCharts({
                   <span className='block truncate text-sm font-medium text-gray-800 group-hover:text-amber-600 dark:text-gray-200 dark:group-hover:text-amber-400'>
                     {item.title}
                   </span>
+                  {item.chineseTitle ? (
+                    <span className='block truncate text-xs text-gray-400 mt-0.5'>
+                      {item.chineseTitle}
+                    </span>
+                  ) : null}
                   <span className='block text-xs text-gray-400 mt-0.5'>
                     {item.year || '年份未知'}
                     {item.mediaType === 'tv' ? ' · 剧集' : ' · 电影'}
