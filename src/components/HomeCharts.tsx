@@ -39,6 +39,7 @@ const CHARTS: ChartDef[] = [
   { id: 'douban-month', label: '豆瓣月榜', sourceNote: '数据来源：豆瓣高分电影' },
   { id: 'top250', label: 'Top250', sourceNote: '数据来源：豆瓣 Top250' },
   { id: 'us-box', label: '北美票房', sourceNote: '数据来源：TMDB 北美正在上映（票房榜暂无公开免费接口）' },
+  { id: 'netflix', label: 'Netflix Top 10', sourceNote: '数据来源：Netflix Top 10 全球榜（每周二更新）' },
 ];
 
 const FALLBACK_NOTE = '（TMDB 未配置或请求失败，已回退到豆瓣「欧美」热门）';
@@ -78,7 +79,11 @@ export default function HomeCharts({
 }) {
   const router = useRouter();
   const [activeId, setActiveId] = useState(CHARTS[0].id);
-  // 每榜一缓存：切回来不再重复请求
+  // Netflix 榜内的电影/剧集子切换（默认电影，与其他电影榜一致）
+  const [netflixType, setNetflixType] = useState<'movie' | 'tv'>('movie');
+  // Netflix 榜当前周（周日日期，如 2026-11-01），接口返回后填入
+  const [netflixWeek, setNetflixWeek] = useState('');
+  // 每榜一缓存：切回来不再重复请求（Netflix 按电影/剧集分开缓存）
   const [cache, setCache] = useState<Record<string, ChartItem[]>>({});
   const [fallbackNote, setFallbackNote] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
@@ -115,9 +120,30 @@ export default function HomeCharts({
     return (data.list || []).map((item) => doubanToChartItem(item, 'oumei'));
   }, []);
 
+  const fetchNetflixChart = useCallback(
+    async (type: 'movie' | 'tv'): Promise<ChartItem[] | null> => {
+      const res = await fetch(`/api/netflix/chart?type=${type}`);
+      if (!res.ok) return null;
+      const json = await res.json();
+      if (
+        json.code !== 200 ||
+        !json.data ||
+        !Array.isArray(json.data.items) ||
+        json.data.items.length === 0
+      ) {
+        return null;
+      }
+      if (json.data.week) setNetflixWeek(json.data.week);
+      return (json.data.items as TMDBItem[]).map(tmdbToChartItem);
+    },
+    []
+  );
+
   const loadChart = useCallback(
     async (id: string) => {
-      if (cache[id]) return;
+      // Netflix 按电影/剧集分开缓存，避免子切换互相覆盖
+      const key = id === 'netflix' ? `netflix-${netflixType}` : id;
+      if (cache[key]) return;
       setLoading(true);
       setError('');
       try {
@@ -156,9 +182,12 @@ export default function HomeCharts({
             pageLimit: 10,
           });
           items = (data.list || []).map((item) => doubanToChartItem(item, 't250'));
+        } else if (id === 'netflix') {
+          const netflixItems = await fetchNetflixChart(netflixType);
+          if (netflixItems) items = netflixItems;
         }
         if (!mountedRef.current) return;
-        setCache((prev) => ({ ...prev, [id]: items }));
+        setCache((prev) => ({ ...prev, [key]: items }));
         setFallbackNote((prev) => ({ ...prev, [id]: usedFallback }));
       } catch (err) {
         console.error('加载榜单失败:', err);
@@ -167,7 +196,7 @@ export default function HomeCharts({
         if (mountedRef.current) setLoading(false);
       }
     },
-    [cache, fetchTmdbChart, fetchDoubanOumei]
+    [cache, fetchTmdbChart, fetchDoubanOumei, fetchNetflixChart, netflixType]
   );
 
   useEffect(() => {
@@ -175,7 +204,10 @@ export default function HomeCharts({
   }, [activeId, loadChart]);
 
   const activeChart = CHARTS.find((c) => c.id === activeId) || CHARTS[0];
-  const items = cache[activeId] || [];
+  // Netflix 按电影/剧集分开取缓存
+  const activeCacheKey =
+    activeId === 'netflix' ? `netflix-${netflixType}` : activeId;
+  const items = cache[activeCacheKey] || [];
 
   const openItem = (item: ChartItem) => {
     const url = `/play?title=${encodeURIComponent(item.title.trim())}${
@@ -215,6 +247,30 @@ export default function HomeCharts({
           </button>
         ))}
       </div>
+
+      {/* Netflix 榜内的电影/剧集子切换 */}
+      {activeId === 'netflix' && (
+        <div className='flex gap-1.5 mb-4'>
+          {(
+            [
+              { id: 'movie', label: '电影' },
+              { id: 'tv', label: '剧集' },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setNetflixType(t.id)}
+              className={
+                t.id === netflixType
+                  ? 'px-3 py-1 rounded-full text-xs font-medium bg-red-600 text-white shadow-sm'
+                  : 'px-3 py-1 rounded-full text-xs bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+              }
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* 排名列表：大数字名次 1-10 */}
       {loading && items.length === 0 ? (
@@ -285,6 +341,7 @@ export default function HomeCharts({
       {/* 数据来源说明 */}
       <p className='text-xs text-gray-400 mt-3'>
         {activeChart.sourceNote}
+        {activeId === 'netflix' && netflixWeek ? `（${netflixWeek} 当周）` : ''}
         {fallbackNote[activeId] ? FALLBACK_NOTE : ''}
       </p>
 
