@@ -230,7 +230,7 @@ export const UserMenu: React.FC = () => {
   const [exactSearch, setExactSearch] = useState(true);
   const [maxConcurrentDownloads, setMaxConcurrentDownloads] = useState(6);
   const [downloadThreadsPerTask, setDownloadThreadsPerTask] = useState(6);
-  const [downloadSegmentTimeout, setDownloadSegmentTimeout] = useState(30000);
+  const [downloadSegmentTimeout, setDownloadSegmentTimeout] = useState(60000);
   const [downloadMode, setDownloadMode] = useState<'browser' | 'filesystem' | 'indexeddb'>(
     'browser'
   );
@@ -1882,6 +1882,18 @@ export const UserMenu: React.FC = () => {
       });
     } catch (err) {
       console.error('选择目录失败:', err);
+      // 选择器被取消，或在当前环境不可靠而自动取消（安卓 Aloha 暴露了
+      // showDirectoryPicker 但一调就 Abort）：不让用户卡在 filesystem 模式，
+      // 回退到浏览器（内存）下载，用户仍可正常下载。与 LibreTV 下载保存
+      // 选择器失败退回内存下载同款。
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        handleDownloadModeChange('browser');
+        setSyncToast({
+          message: '未能选择保存目录，已切换为浏览器下载模式',
+          type: 'info',
+          onClose: () => setSyncToast(null),
+        });
+      }
     }
   };
 
@@ -2373,7 +2385,7 @@ export const UserMenu: React.FC = () => {
         setDownloadThreadsPerTask(6);
         break;
       case 'downloadSegmentTimeout':
-        setDownloadSegmentTimeout(30000);
+        setDownloadSegmentTimeout(60000);
         break;
       case 'downloadMode':
         setDownloadMode('browser');
@@ -4447,7 +4459,7 @@ export const UserMenu: React.FC = () => {
                         分片下载超时
                       </h4>
                       <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
-                        单个分片超过该时间仍未完成时会自动判定超时并按原分片重试
+                        分片下载过程中超过该时间无数据到达时判定为停滞并中断重试（响应头等待另限 20 秒，不再整段限时）
                       </p>
                     </div>
                     <div className='flex items-center justify-between'>

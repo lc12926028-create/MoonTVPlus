@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { getConfig } from '@/lib/config';
 import { validateProxyUrlServerSide } from '@/lib/server/ssrf';
+import { fetchUpstreamWithRetry } from '@/lib/server/proxy-fetch';
 
 export const runtime = 'nodejs';
 
@@ -75,9 +76,10 @@ export async function GET(request: NextRequest) {
       origin = `${proto}://${host}`;
     }
 
-    // 获取原始 m3u8 内容
+    // 获取原始 m3u8 内容：仅对「响应头等待」限时 + 429 退避重试
+    //（见 lib/server/proxy-fetch），拿到头后 body 不再受限。
     const m3u8UrlObj = new URL(m3u8Url);
-    const response = await fetch(m3u8Url, {
+    const response = await fetchUpstreamWithRetry(m3u8Url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': '*/*',
@@ -86,6 +88,14 @@ export async function GET(request: NextRequest) {
         'Referer': `${m3u8UrlObj.protocol}//${m3u8UrlObj.host}/`,
       },
     });
+
+    // 上游仍限流时透传 429（而非一律包成 500），让客户端按 429 退避重试
+    if (response.status === 429) {
+      return NextResponse.json(
+        { error: '上游限流，请稍后重试' },
+        { status: 429 }
+      );
+    }
 
     if (!response.ok) {
       return NextResponse.json(

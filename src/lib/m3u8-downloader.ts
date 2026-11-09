@@ -15,6 +15,23 @@ import {
   saveIndexedDBVideoSegment,
 } from './indexeddb-video-cache';
 
+// 仅对「响应头等待」限时（与 LibreTV fetchSegment 同款）：拿到响应头后清除计时器，
+// body 不再受固定整段时限——之前 xhr.timeout（默认 30s）作用于整条请求，分片稍大/网稍慢
+// 就 30 秒切断，重试 3 次也一样失败。
+const SEGMENT_HEADER_TIMEOUT_MS = 20_000;
+// body 停滞判定：连续这么久无数据到达才判停滞并中断（由「分片下载超时」设置控制，默认 60s）。
+const DEFAULT_SEGMENT_STALL_MS = 60_000;
+// 429 限流时的重试等待：立即重试只会再吃 429，先等几秒再试。
+const RETRY_429_BASE_MS = 4000;
+
+/** 解析 Retry-After（秒）为毫秒，夹在 1s~8s；解析失败返回 undefined */
+function parseRetryAfterMs(raw: string | null): number | undefined {
+  if (!raw) return undefined;
+  const seconds = parseInt(raw, 10);
+  if (!Number.isFinite(seconds) || seconds < 0) return undefined;
+  return Math.min(Math.max(seconds * 1000, 1000), 8000);
+}
+
 export type M3U8SegmentLogStatus =
   | 'queued'
   | 'downloading'
@@ -415,10 +432,16 @@ export class M3U8Downloader {
    */
   private downloadTS(task: M3U8DownloadTask): void {
     const maxRetries = 3;
-    // 单个分片超时时间，默认 30 秒；可通过 localStorage.downloadSegmentTimeout 调整（单位：毫秒）
-    const segmentTimeout = typeof window !== 'undefined'
-      ? Number(localStorage.getItem('downloadSegmentTimeout') || 30000)
-      : 30000;
+    // 停滞阈值：分片下载过程中连续这么久无数据到达，才判定停滞并中断重试。
+    // 之前是 xhr.timeout 整段限时（默认 30s），分片稍大/网稍慢就整段切断；
+    // 现在只对「响应头等待」限时 20s + 无数据停滞计时，与 LibreTV fetchSegment 同款。
+    // 可通过 localStorage.downloadSegmentTimeout 调整（单位：毫秒，默认 60s）。
+    const stallTimeoutMs =
+      typeof window !== 'undefined'
+        ? Number(localStorage.getItem('downloadSegmentTimeout') || DEFAULT_SEGMENT_STALL_MS)
+        : DEFAULT_SEGMENT_STALL_MS;
+    const segmentStallMs =
+      Number.isFinite(stallTimeoutMs) && stallTimeoutMs > 0 ? stallTimeoutMs : DEFAULT_SEGMENT_STALL_MS;
 
     const cleanupRequest = (xhr: XMLHttpRequest) => {
       const requestIndex = task.requests.indexOf(xhr);
@@ -458,16 +481,38 @@ export class M3U8Downloader {
 
       const xhr = new XMLHttpRequest();
       let settled = false;
+      // 计时器：响应头计时（20s）+ 无数据停滞计时（默认 60s）。
+      // 之前 xhr.timeout 是整段限时，分片稍大/网稍慢就整段切断；现在只判
+      // 「头等太久」和「中途断流」，与 LibreTV fetchSegment 同款。
+      let headerTimer: ReturnType<typeof setTimeout> | undefined;
+      let stallTimer: ReturnType<typeof setTimeout> | undefined;
+      // abort 原因：'header' = 响应头超时，'stall' = 无数据停滞，undefined = 用户暂停/取消
+      let abortKind: 'header' | 'stall' | undefined;
+      const clearTimers = () => {
+        if (headerTimer) clearTimeout(headerTimer);
+        if (stallTimer) clearTimeout(stallTimer);
+        headerTimer = undefined;
+        stallTimer = undefined;
+      };
+      const armStallTimer = () => {
+        if (stallTimer) clearTimeout(stallTimer);
+        stallTimer = setTimeout(() => {
+          abortKind = 'stall';
+          xhr.abort();
+        }, segmentStallMs);
+      };
 
       const handleFailure = (
         reason: string,
         status: M3U8SegmentLogStatus = 'error',
-        httpStatus?: number
+        httpStatus?: number,
+        retryAfterMs?: number
       ) => {
         if (settled) {
           return;
         }
         settled = true;
+        clearTimers();
         cleanupRequest(xhr);
 
         // 暂停/取消时 abort 请求，不应计为失败或触发重试
@@ -490,12 +535,16 @@ export class M3U8Downloader {
           });
           console.log(`片段 ${index} ${reason}，正在重试 (${currentRetry + 1}/${maxRetries})...`);
 
+          // 429 限流时立即重试只会再吃 429：按 Retry-After 或 4 秒退避后再试；
+          // 其他失败沿用原来的 1s/2s/3s 递增等待。
           // 延迟后按原 index 重试，避免失败分片被全局 downloadIndex 跳过后遗留到末尾
+          const delayMs =
+            httpStatus === 429 ? (retryAfterMs ?? RETRY_429_BASE_MS) : 1000 * (currentRetry + 1);
           setTimeout(() => {
             if (task.status !== 'pause') {
               downloadSegment(index, onSettled);
             }
-          }, 1000 * (currentRetry + 1));
+          }, delayMs);
         } else {
           task.errorNum++;
           task.finishList[index].status = 'is-error';
@@ -514,7 +563,18 @@ export class M3U8Downloader {
       };
 
       xhr.responseType = 'arraybuffer';
-      xhr.timeout = Number.isFinite(segmentTimeout) && segmentTimeout > 0 ? segmentTimeout : 30000;
+      // 不再设 xhr.timeout 整段限时：改由响应头计时 + 无数据停滞计时判定。
+      xhr.onreadystatechange = () => {
+        // readyState 2 = 已收到响应头：头计时到此为止，body 不再受整段时限
+        if (xhr.readyState === 2 && headerTimer) {
+          clearTimeout(headerTimer);
+          headerTimer = undefined;
+        }
+      };
+      xhr.onprogress = () => {
+        // 有数据到达即重置停滞计时
+        if (!settled) armStallTimer();
+      };
       xhr.onload = () => {
         if (settled) {
           return;
@@ -522,6 +582,7 @@ export class M3U8Downloader {
 
         if (xhr.status >= 200 && xhr.status < 300) {
           settled = true;
+          clearTimers();
           cleanupRequest(xhr);
           this.dealTS(task, xhr.response, index, () => {
             if (task.finishList[index]?.status === 'is-success') {
@@ -536,15 +597,36 @@ export class M3U8Downloader {
             }
             onSettled();
           });
+        } else if (xhr.status === 429) {
+          // 上游限流：带上 Retry-After 走退避重试
+          handleFailure(
+            '下载失败 HTTP 429（上游限流）',
+            'error',
+            429,
+            parseRetryAfterMs(xhr.getResponseHeader('Retry-After'))
+          );
         } else {
           handleFailure(`下载失败 HTTP ${xhr.status}`, 'error', xhr.status);
         }
       };
       xhr.onerror = () => handleFailure('网络错误', 'error');
-      xhr.ontimeout = () => handleFailure(`下载超时（${xhr.timeout}ms）`, 'timeout');
-      xhr.onabort = () => handleFailure('请求中止', 'aborted');
+      xhr.onabort = () => {
+        if (abortKind === 'header') {
+          handleFailure(`响应头等待超过 ${SEGMENT_HEADER_TIMEOUT_MS / 1000} 秒`, 'timeout');
+        } else if (abortKind === 'stall') {
+          handleFailure(`分片读取停滞超过 ${Math.round(segmentStallMs / 1000)} 秒`, 'timeout');
+        } else {
+          handleFailure('请求中止', 'aborted');
+        }
+      };
 
       xhr.open('GET', task.tsUrlList[index], true);
+      // 响应头计时：20s 内收不到响应头即中断；收到头后由停滞计时接管
+      headerTimer = setTimeout(() => {
+        abortKind = 'header';
+        xhr.abort();
+      }, SEGMENT_HEADER_TIMEOUT_MS);
+      armStallTimer();
       xhr.send();
       task.requests.push(xhr);
     };
@@ -685,25 +767,52 @@ export class M3U8Downloader {
   }
 
   /**
-   * 获取 M3U8 文件
+   * 获取 M3U8 文件（重试 2 次）。
+   * 429 限流时立即重试只会再吃 429：按 Retry-After 或 4 秒退避后再试；
+   * 其他失败等 1 秒再试。与 LibreTV 播放列表解析重试同款。
    */
   private async fetchM3U8(url: string): Promise<string> {
     console.log('fetchM3U8 - 请求 URL:', url);
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.onreadystatechange = () => {
-        if (xhr.readyState === 4) {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve(xhr.responseText);
-          } else {
-            console.error('fetchM3U8 失败 - URL:', url, 'Status:', xhr.status);
-            reject(new Error(`HTTP ${xhr.status}`));
-          }
+    let lastErr: Error | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await new Promise<string>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.timeout = SEGMENT_HEADER_TIMEOUT_MS;
+          xhr.onreadystatechange = () => {
+            if (xhr.readyState === 4) {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(xhr.responseText);
+              } else {
+                console.error('fetchM3U8 失败 - URL:', url, 'Status:', xhr.status);
+                const err = new Error(`HTTP ${xhr.status}`) as Error & {
+                  status?: number;
+                  retryAfterMs?: number;
+                };
+                err.status = xhr.status;
+                if (xhr.status === 429) {
+                  err.retryAfterMs = parseRetryAfterMs(xhr.getResponseHeader('Retry-After'));
+                }
+                reject(err);
+              }
+            }
+          };
+          xhr.onerror = () => reject(new Error('网络错误'));
+          xhr.ontimeout = () => reject(new Error('请求超时'));
+          xhr.open('GET', url, true);
+          xhr.send();
+        });
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error('未知错误');
+        if (attempt === 0) {
+          const typed = lastErr as Error & { status?: number; retryAfterMs?: number };
+          const delayMs =
+            typed.status === 429 ? (typed.retryAfterMs ?? RETRY_429_BASE_MS) : 1000;
+          await new Promise((r) => setTimeout(r, delayMs));
         }
-      };
-      xhr.open('GET', url, true);
-      xhr.send();
-    });
+      }
+    }
+    throw lastErr ?? new Error('获取 M3U8 失败');
   }
 
   /**
