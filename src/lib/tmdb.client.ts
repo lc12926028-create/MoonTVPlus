@@ -463,6 +463,71 @@ export async function getTMDBTrendingContent(
 }
 
 /**
+ * 首页榜单：TMDB 榜单数据（方案 A「榜单为王」的 IMDb 周榜 / 月榜 / 北美票房）。
+ * IMDb 无公开免费接口，这里用 TMDB 近似并在页面标注数据来源。
+ * - week：TMDB 本周热门（trending/all/week）
+ * - month：近 30 天上映、按热度排序（discover/movie）
+ * - us：北美正在上映（movie/now_playing?region=US）
+ * 返回统一的 TMDBItem 列表（取前 10）。
+ */
+export async function getTMDBChartContent(
+  apiKey: string,
+  kind: 'week' | 'month' | 'us',
+  proxy?: string,
+  reverseProxyBaseUrl?: string
+): Promise<{ code: number; list: TMDBItem[] }> {
+  try {
+    const actualKey = getNextApiKey(apiKey);
+    if (!actualKey) {
+      return { code: 400, list: [] };
+    }
+
+    const baseUrl = reverseProxyBaseUrl || DEFAULT_TMDB_BASE_URL;
+    const lang = 'language=zh-CN';
+    let url: string;
+    if (kind === 'week') {
+      url = `${baseUrl}/3/trending/all/week?api_key=${actualKey}&${lang}`;
+    } else if (kind === 'month') {
+      const today = new Date();
+      const ago = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+      const fmt = (d: Date) => d.toISOString().slice(0, 10);
+      url = `${baseUrl}/3/discover/movie?api_key=${actualKey}&${lang}&primary_release_date.gte=${fmt(
+        ago
+      )}&primary_release_date.lte=${fmt(today)}&sort_by=popularity.desc`;
+    } else {
+      url = `${baseUrl}/3/movie/now_playing?api_key=${actualKey}&${lang}&region=US`;
+    }
+
+    const response = await universalFetch(url, proxy);
+    if (!response.ok) {
+      console.error('TMDB 榜单 API 请求失败:', response.status, response.statusText);
+      return { code: response.status, list: [] };
+    }
+
+    const data: any = await response.json();
+    const items: TMDBItem[] = (data.results || [])
+      .filter((item: any) => item.poster_path)
+      .slice(0, 10)
+      .map((item: any) => ({
+        id: item.id,
+        title: item.title || item.name || '',
+        poster_path: item.poster_path,
+        backdrop_path: item.backdrop_path || null,
+        release_date: item.release_date || item.first_air_date || '',
+        overview: item.overview || '',
+        vote_average: item.vote_average || 0,
+        media_type: (item.media_type as 'movie' | 'tv') || (kind === 'us' || kind === 'month' ? 'movie' : 'movie'),
+        genre_ids: item.genre_ids || [],
+      }));
+
+    return { code: 200, list: items };
+  } catch (error) {
+    console.error('获取 TMDB 榜单数据失败:', error);
+    return { code: 500, list: [] };
+  }
+}
+
+/**
  * 获取 TMDB 图片完整 URL
  * @param path - 图片路径
  * @param size - 图片尺寸，默认 w500

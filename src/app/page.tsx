@@ -27,6 +27,7 @@ import AIChatPanel from '@/components/AIChatPanel';
 import BannerCarousel from '@/components/BannerCarousel';
 import ContinueWatching from '@/components/ContinueWatching';
 import FireworksCanvas from '@/components/FireworksCanvas';
+import HomeCharts from '@/components/HomeCharts';
 import HttpWarningDialog from '@/components/HttpWarningDialog';
 import PageLayout from '@/components/PageLayout';
 import ScrollableRow from '@/components/ScrollableRow';
@@ -56,7 +57,7 @@ function HomeClient() {
   const { announcement, announcementDisplayMode } = useSite();
   // 首页模块配置状态
   const [homeModules, setHomeModules] = useState<HomeModule[]>([
-    { id: 'hotMovies', name: '热门电影', enabled: true, order: 0 },
+    { id: 'charts', name: '影视榜单', enabled: true, order: 0 },
     { id: 'hotDuanju', name: '热播短剧', enabled: true, order: 1 },
     { id: 'bangumiCalendar', name: '新番放送', enabled: true, order: 2 },
     { id: 'hotTvShows', name: '热门剧集', enabled: true, order: 3 },
@@ -259,7 +260,25 @@ function HomeClient() {
     const savedHomeModules = localStorage.getItem('homeModules');
     if (savedHomeModules) {
       try {
-        setHomeModules(JSON.parse(savedHomeModules));
+        const parsed: HomeModule[] = JSON.parse(savedHomeModules);
+        // 迁移：旧版「热门电影」模块已被方案 A「影视榜单」取代
+        // （榜单区下方自带今日热门海报墙），旧配置里没有 charts 时替换掉它
+        if (!parsed.some((m) => m.id === 'charts')) {
+          const hotIdx = parsed.findIndex((m) => m.id === 'hotMovies');
+          const chartsModule: HomeModule = {
+            id: 'charts',
+            name: '影视榜单',
+            enabled: true,
+            order: hotIdx >= 0 ? parsed[hotIdx].order : 0,
+          };
+          const migrated =
+            hotIdx >= 0
+              ? parsed.map((m, i) => (i === hotIdx ? chartsModule : m))
+              : [chartsModule, ...parsed];
+          setHomeModules(migrated);
+        } else {
+          setHomeModules(parsed);
+        }
       } catch (error) {
         console.error('解析首页模块配置失败:', error);
       }
@@ -567,6 +586,16 @@ function HomeClient() {
   // 渲染模块的函数
   const renderModule = (moduleId: string) => {
     switch (moduleId) {
+      case 'charts':
+        // 方案 A「榜单为王」：榜单切换栏 + 大数字名次排名列表 + 今日热门海报墙
+        return (
+          <HomeCharts
+            key='charts'
+            hotMovies={hotMovies}
+            loading={loading}
+          />
+        );
+
       case 'hotMovies':
         return (
           <section key='hotMovies' className='mb-8'>
