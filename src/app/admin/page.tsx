@@ -381,6 +381,11 @@ interface SiteConfig {
   TMDBProxy?: string;
   TMDBReverseProxy?: string;
   TMDBImageBaseUrl?: string;
+  B2KeyId?: string;
+  B2ApplicationKey?: string;
+  B2BucketName?: string;
+  B2Endpoint?: string;
+  B2Region?: string;
   BangumiDataSource?:
     | 'direct'
     | 'server-proxy'
@@ -11104,6 +11109,11 @@ const SiteConfigComponent = ({
     TMDBProxy: '',
     TMDBReverseProxy: '',
     TMDBImageBaseUrl: 'https://image.tmdb.org',
+    B2KeyId: '',
+    B2ApplicationKey: '',
+    B2BucketName: 'moontvplus-ai-duanju',
+    B2Endpoint: 's3.us-east-005.backblazeb2.com',
+    B2Region: 'us-east-005',
     BangumiDataSource: 'direct',
     BangumiApiBaseUrl: 'https://api.bgm.tv',
     BangumiImageBaseUrl: '',
@@ -11231,6 +11241,13 @@ const SiteConfigComponent = ({
         TMDBReverseProxy: config.SiteConfig.TMDBReverseProxy || '',
         TMDBImageBaseUrl:
           config.SiteConfig.TMDBImageBaseUrl || 'https://image.tmdb.org',
+        B2KeyId: config.SiteConfig.B2KeyId || '',
+        B2ApplicationKey: config.SiteConfig.B2ApplicationKey || '',
+        B2BucketName:
+          config.SiteConfig.B2BucketName || 'moontvplus-ai-duanju',
+        B2Endpoint:
+          config.SiteConfig.B2Endpoint || 's3.us-east-005.backblazeb2.com',
+        B2Region: config.SiteConfig.B2Region || 'us-east-005',
         BangumiDataSource: config.SiteConfig.BangumiDataSource || 'direct',
         BangumiApiBaseUrl:
           config.SiteConfig.BangumiApiBaseUrl || 'https://api.bgm.tv',
@@ -12112,6 +12129,117 @@ const SiteConfigComponent = ({
               用户未在本地数据源设置中配置 TMDB 图片地址时，图片默认使用该地址（默认
               https://image.tmdb.org）
             </p>
+          </div>
+        </div>
+      </details>
+
+      {/* B2 AI 短剧配置 */}
+      <details className='pt-4 border-t border-gray-200 dark:border-gray-700'>
+        <summary className='text-sm font-semibold text-gray-900 dark:text-gray-100 cursor-pointer'>
+          B2 AI 短剧
+        </summary>
+        <div className='mt-4 space-y-4'>
+          <p className='text-xs text-amber-600 dark:text-amber-400'>
+            仅站长可见的 AI 短剧入口（/ai-duanju）使用。视频存在 Backblaze
+            B2 私有桶，播放时服务端签发 1 小时有效的预签名直链，走
+            directplay 通道播放。密钥只存在服务端，不会下发给浏览器。
+          </p>
+          {/* B2 Key ID */}
+          <div>
+            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+              B2 Application Key ID
+            </label>
+            <input
+              type='text'
+              placeholder='请输入 B2 Application Key ID'
+              value={siteSettings.B2KeyId || ''}
+              onChange={(e) =>
+                setSiteSettings((prev) => ({
+                  ...prev,
+                  B2KeyId: e.target.value,
+                }))
+              }
+              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
+            />
+          </div>
+
+          {/* B2 Application Key */}
+          <div>
+            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+              B2 Application Key
+            </label>
+            <input
+              type='password'
+              placeholder='请输入 B2 Application Key'
+              value={siteSettings.B2ApplicationKey || ''}
+              onChange={(e) =>
+                setSiteSettings((prev) => ({
+                  ...prev,
+                  B2ApplicationKey: e.target.value,
+                }))
+              }
+              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
+            />
+            <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+              建议使用仅限 moontvplus-ai-duanju 桶读写的应用密钥。保存后需点「重载配置」再生效。
+            </p>
+          </div>
+
+          {/* B2 Bucket Name */}
+          <div>
+            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+              B2 桶名
+            </label>
+            <input
+              type='text'
+              placeholder='moontvplus-ai-duanju'
+              value={siteSettings.B2BucketName || ''}
+              onChange={(e) =>
+                setSiteSettings((prev) => ({
+                  ...prev,
+                  B2BucketName: e.target.value,
+                }))
+              }
+              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
+            />
+          </div>
+
+          {/* B2 Endpoint */}
+          <div>
+            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+              B2 S3 端点
+            </label>
+            <input
+              type='text'
+              placeholder='s3.us-east-005.backblazeb2.com'
+              value={siteSettings.B2Endpoint || ''}
+              onChange={(e) =>
+                setSiteSettings((prev) => ({
+                  ...prev,
+                  B2Endpoint: e.target.value,
+                }))
+              }
+              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
+            />
+          </div>
+
+          {/* B2 Region */}
+          <div>
+            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+              B2 S3 区域
+            </label>
+            <input
+              type='text'
+              placeholder='us-east-005'
+              value={siteSettings.B2Region || ''}
+              onChange={(e) =>
+                setSiteSettings((prev) => ({
+                  ...prev,
+                  B2Region: e.target.value,
+                }))
+              }
+              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
+            />
           </div>
         </div>
       </details>

@@ -5621,7 +5621,8 @@ function PlayPageClient() {
         setNeedPrefer(false);
         setCurrentSource('directplay');
         setCurrentId(currentId);
-        setVideoTitle('直链播放');
+        // AI 短剧等入口可通过 title 参数传入片名，未传则显示「直链播放」
+        setVideoTitle(searchParams.get('title') || '直链播放');
         setVideoYear('');
         setVideoCover('');
         setVideoDoubanId(0);

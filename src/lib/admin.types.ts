@@ -29,6 +29,12 @@ export interface AdminConfig {
     TMDBReverseProxy?: string;
     // TMDB 图片默认地址：用户未在本地数据源设置中配置时，图片默认使用该地址
     TMDBImageBaseUrl?: string;
+    // B2 AI 短剧配置（仅站长可见的 AI 短剧入口使用，播放走 S3 预签名直链）
+    B2KeyId?: string; // Backblaze B2 Application Key ID
+    B2ApplicationKey?: string; // Backblaze B2 Application Key（建议仅限 moontvplus-ai-duanju 桶）
+    B2BucketName?: string; // B2 桶名，默认 moontvplus-ai-duanju
+    B2Endpoint?: string; // B2 S3 兼容端点，默认 s3.us-east-005.backblazeb2.com
+    B2Region?: string; // B2 S3 区域，默认 us-east-005
     // 动漫/Bangumi配置
     BangumiDataSource?:
       | 'direct'

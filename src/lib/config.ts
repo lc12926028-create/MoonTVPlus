@@ -318,6 +318,13 @@ async function getInitConfig(
       TMDBReverseProxy: process.env.TMDB_REVERSE_PROXY || '',
       TMDBImageBaseUrl:
         process.env.TMDB_IMAGE_BASE_URL || DEFAULT_TMDB_IMAGE_BASE_URL,
+      // B2 AI 短剧配置（仅站长可见的 AI 短剧入口使用）
+      B2KeyId: process.env.B2_KEY_ID || '',
+      B2ApplicationKey: process.env.B2_APPLICATION_KEY || '',
+      B2BucketName: process.env.B2_BUCKET_NAME || 'moontvplus-ai-duanju',
+      B2Endpoint:
+        process.env.B2_ENDPOINT || 's3.us-east-005.backblazeb2.com',
+      B2Region: process.env.B2_REGION || 'us-east-005',
       // 动漫/Bangumi配置
       BangumiDataSource:
         (process.env.NEXT_PUBLIC_BANGUMI_DATA_SOURCE as any) || 'direct',

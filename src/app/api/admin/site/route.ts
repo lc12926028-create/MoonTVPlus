@@ -49,6 +49,11 @@ export async function POST(request: NextRequest) {
       TMDBProxy,
       TMDBReverseProxy,
       TMDBImageBaseUrl,
+      B2KeyId,
+      B2ApplicationKey,
+      B2BucketName,
+      B2Endpoint,
+      B2Region,
       BangumiDataSource,
       BangumiApiBaseUrl,
       BangumiImageBaseUrl,
@@ -112,6 +117,11 @@ export async function POST(request: NextRequest) {
       TMDBProxy?: string;
       TMDBReverseProxy?: string;
       TMDBImageBaseUrl?: string;
+      B2KeyId?: string;
+      B2ApplicationKey?: string;
+      B2BucketName?: string;
+      B2Endpoint?: string;
+      B2Region?: string;
       BangumiDataSource?:
         | 'direct'
         | 'server-proxy'
@@ -189,6 +199,12 @@ export async function POST(request: NextRequest) {
         typeof TMDBReverseProxy !== 'string') ||
       (TMDBImageBaseUrl !== undefined &&
         typeof TMDBImageBaseUrl !== 'string') ||
+      (B2KeyId !== undefined && typeof B2KeyId !== 'string') ||
+      (B2ApplicationKey !== undefined &&
+        typeof B2ApplicationKey !== 'string') ||
+      (B2BucketName !== undefined && typeof B2BucketName !== 'string') ||
+      (B2Endpoint !== undefined && typeof B2Endpoint !== 'string') ||
+      (B2Region !== undefined && typeof B2Region !== 'string') ||
       (BangumiDataSource !== undefined &&
         BangumiDataSource !== 'direct' &&
         BangumiDataSource !== 'server-proxy' &&
@@ -299,6 +315,11 @@ export async function POST(request: NextRequest) {
       TMDBProxy: normalizeApiBaseUrl(TMDBProxy),
       TMDBReverseProxy: normalizeApiBaseUrl(TMDBReverseProxy),
       TMDBImageBaseUrl: normalizeApiBaseUrl(TMDBImageBaseUrl),
+      B2KeyId,
+      B2ApplicationKey,
+      B2BucketName,
+      B2Endpoint: normalizeApiBaseUrl(B2Endpoint),
+      B2Region,
       BangumiDataSource,
       BangumiApiBaseUrl: normalizeApiBaseUrl(BangumiApiBaseUrl),
       BangumiImageBaseUrl: normalizeApiBaseUrl(BangumiImageBaseUrl),
