@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import {
   B2_PRESIGNED_URL_EXPIRES_IN,
-  createB2PresignedUrl,
+  createPlayProxyUrl,
   getB2Settings,
   prettifyB2Title,
 } from '@/lib/server/b2';
@@ -13,8 +13,10 @@ export const runtime = 'nodejs';
 
 /**
  * GET /api/admin/ai-duanju/play-url?file=<B2 对象 key>
- * 仅站长（owner）可访问：为指定视频签发 S3 预签名播放链接（有效期 1 小时）。
- * 前端拿到链接后走现有 directplay 通道播放，视频流不经过本站 Worker。
+ * 仅站长（owner）可访问：为指定视频签发经 Cloudflare 中转的播放链接
+ * （play.moontvplus.top，短时效 HMAC 令牌，有效期 1 小时）。
+ * 前端拿到链接后走现有 directplay 通道播放，视频流经 CF 边缘中转，
+ * 不再由浏览器直连美国东部 B2（直连慢/卡）。
  */
 export async function GET(request: NextRequest) {
   try {
@@ -40,7 +42,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const url = await createB2PresignedUrl(settings, file);
+    const url = await createPlayProxyUrl(settings, file);
     return NextResponse.json({
       url,
       file,
