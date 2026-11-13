@@ -5,9 +5,12 @@ import { getConfig } from '@/lib/config';
  * Backblaze B2（S3 兼容 API）服务端工具
  *
  * 仅供服务端路由使用：B2 Application Key 只存在服务端，绝不下发给浏览器。
- * 播放方案：服务端用 S3 预签名 URL（SigV4，有效期 1 小时）签发单文件直链，
- * 前端拿到后走现有 directplay 通道（/play?source=directplay）直接播放。
- * 这样视频流不经过 Worker，浏览器直连 B2，Range/拖动进度天然可用。
+ * 播放方案（现行）：服务端签发带短时效 HMAC 令牌的中转地址，指向 Cloudflare
+ * Worker（play.moontvplus.top，源码 ~/workspace/ai-duanju-play/worker.js）；
+ * Worker 验令牌后用 SigV4 向 B2 取流、透传 Range 并走 CF 边缘缓存，前端仍走
+ * 现有 directplay 通道（/play?source=directplay）播放。原「浏览器直连 B2
+ * 预签名地址」方案国内直连美国东部太慢/卡，已弃用；createB2PresignedUrl
+ * 保留作备用。
  */
 
 export interface B2Settings {
@@ -184,6 +187,30 @@ export async function createB2PresignedUrl(
   const signature = toHex(await hmacSha256(signingKey, stringToSign));
 
   return `https://${settings.endpoint}${canonicalUri}?${canonicalQueryString}&X-Amz-Signature=${signature}`;
+}
+
+/** AI 短剧播放中转 Worker 地址（视频流经 Cloudflare 边缘中转） */
+export const AI_DUANJU_PLAY_PROXY_BASE = 'https://play.moontvplus.top';
+
+/**
+ * 生成经 Cloudflare 中转的播放地址（短时效 HMAC 令牌，有效期与预签名同为 1 小时）。
+ * 令牌 sig = HMAC-SHA256(applicationKey, `${key}\n${exp}`) 的 hex 小写；
+ * 中转 Worker 持有同一把 B2 密钥（secret），验签后以 SigV4 向 B2 取流。
+ * 令牌只证明「站点已授权此文件在此刻前播放」，不携带密钥本身。
+ * 调用方必须是站长鉴权通过后的服务端路由。
+ */
+export async function createPlayProxyUrl(
+  settings: B2Settings,
+  key: string,
+  expiresIn: number = B2_PRESIGNED_URL_EXPIRES_IN
+): Promise<string> {
+  const exp = Math.floor(Date.now() / 1000) + expiresIn;
+  const signature = toHex(
+    await hmacSha256(encoder.encode(settings.applicationKey), `${key}\n${exp}`)
+  );
+  return `${AI_DUANJU_PLAY_PROXY_BASE}/${encodeS3Key(
+    key
+  )}?e=${exp}&s=${signature}`;
 }
 
 /**
