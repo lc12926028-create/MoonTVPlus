@@ -5603,6 +5603,45 @@ function PlayPageClient() {
           return;
         }
 
+        // AI 短剧的直链（B2 预签名 / 中转令牌）都只有 1 小时有效期，
+        // 继续观看等旧记录里存的地址必然过期：识别出这类地址后，
+        // 从路径提取 B2 对象 key，向站长接口换一份新鲜的中转地址再播；
+        // 换不到（非站长、未配置等）就回退用原地址，行为与之前一致。
+        try {
+          const parsedDirectUrl = new URL(directUrl);
+          const pathSegments = parsedDirectUrl.pathname
+            .split('/')
+            .filter((s) => s.length > 0)
+            .map((s) => decodeURIComponent(s));
+          let aiDuanjuFile = '';
+          if (parsedDirectUrl.hostname === 'play.moontvplus.top') {
+            aiDuanjuFile = pathSegments.join('/');
+          } else if (
+            parsedDirectUrl.hostname.endsWith('backblazeb2.com') &&
+            pathSegments.length >= 2
+          ) {
+            // 预签名直链路径形如 /<bucket>/<对象 key>
+            aiDuanjuFile = pathSegments.slice(1).join('/');
+          }
+          if (aiDuanjuFile && !aiDuanjuFile.includes('..')) {
+            const refreshResp = await fetch(
+              `/api/admin/ai-duanju/play-url?file=${encodeURIComponent(
+                aiDuanjuFile
+              )}`
+            );
+            const refreshData = await refreshResp.json().catch(() => ({}));
+            if (
+              refreshResp.ok &&
+              typeof refreshData?.url === 'string' &&
+              refreshData.url
+            ) {
+              directUrl = refreshData.url;
+            }
+          }
+        } catch (refreshError) {
+          console.warn('AI 短剧直链刷新失败，继续使用原地址:', refreshError);
+        }
+
         const directDetail: SearchResult = {
           id: currentId,
           title: '直链播放',
