@@ -96,7 +96,7 @@ import {
 } from '@/lib/subtitle-converter';
 import { getTMDBImageUrl } from '@/lib/tmdb.search';
 import { DanmakuFilterConfig, EpisodeFilterConfig, SearchResult } from '@/lib/types';
-import { base58Decode, getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
+import { base58Decode, base58Encode, getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
 import { useEnableAIComments } from '@/hooks/useEnableAIComments';
 import { useEnableComments } from '@/hooks/useEnableComments';
 import { useWatchRoomContextSafe } from '@/components/WatchRoomProvider';
@@ -1070,6 +1070,8 @@ function PlayPageClient() {
   const detailRef = useRef<SearchResult | null>(detail);
   const currentEpisodeIndexRef = useRef(currentEpisodeIndex);
   const isSourceChangingRef = useRef(false); // 标记是否正在换源
+  const aiDuanjuFileRef = useRef(''); // AI 短剧直链解析出的 B2 对象 key（非 AI 短剧为空）
+  const aiDuanjuNextRef = useRef<{ key: string; title: string } | null | undefined>(undefined); // undefined=未查，null=没有下一集
 
   // 同步最新值到 refs
   useEffect(() => {
@@ -5638,6 +5640,9 @@ function PlayPageClient() {
               directUrl = refreshData.url;
             }
           }
+          // 记下当前集的 B2 对象 key，供「下一集」按钮定位同剧下一集
+          aiDuanjuFileRef.current = aiDuanjuFile;
+          aiDuanjuNextRef.current = undefined;
         } catch (refreshError) {
           console.warn('AI 短剧直链刷新失败，继续使用原地址:', refreshError);
         }
@@ -6408,7 +6413,147 @@ function PlayPageClient() {
     return isEpisodeHiddenByFilter(title, episodeFilterConfigRef.current);
   };
 
+  // ---------------------------------------------------------------------------
+  // AI 短剧直链「下一集」
+  // 标题解析规则与 AI 短剧列表页（src/app/ai-duanju/page.tsx）保持一致：
+  // 以标题结尾的「第N集」切分剧名与集数，N 支持阿拉伯数字与中文数字。
+  // ---------------------------------------------------------------------------
+  const parseAiDuanjuEpisodeNumber = (text: string): number | null => {
+    const digits: Record<string, number> = {
+      零: 0,
+      一: 1,
+      二: 2,
+      三: 3,
+      四: 4,
+      五: 5,
+      六: 6,
+      七: 7,
+      八: 8,
+      九: 9,
+    };
+    const tenIndex = text.indexOf('十');
+    if (tenIndex >= 0) {
+      const tensPart = text.slice(0, tenIndex);
+      const onesPart = text.slice(tenIndex + 1);
+      const tens = tensPart === '' ? 1 : digits[tensPart];
+      const ones = onesPart === '' ? 0 : digits[onesPart];
+      if (tens === undefined || ones === undefined) return null;
+      return tens * 10 + ones;
+    }
+    const value = digits[text];
+    return value === undefined ? null : value;
+  };
+
+  const parseAiDuanjuTitleForNext = (
+    title: string
+  ): { series: string; episode: number | null } => {
+    const match = title
+      .trim()
+      .match(/^(.*?)[\s\-_·:：—、]*第\s*([0-9]+|[零一二三四五六七八九十]+)\s*集$/);
+    if (!match) return { series: title, episode: null };
+    let series = match[1].trim().replace(/[\s\-_·:：—、]+$/, '');
+    if (series.startsWith('《') && series.endsWith('》')) {
+      series = series.slice(1, -1).trim();
+    }
+    if (!series) return { series: title, episode: null };
+    const rawNumber = match[2];
+    const episode = /^[0-9]+$/.test(rawNumber)
+      ? parseInt(rawNumber, 10)
+      : parseAiDuanjuEpisodeNumber(rawNumber);
+    if (episode === null || Number.isNaN(episode)) {
+      return { series: title, episode: null };
+    }
+    return { series, episode };
+  };
+
+  // 查同剧下一集：优先用缓存，没有就拉 AI 短剧列表、按 B2 对象 key 定位当前集再找下一集。
+  // 返回 undefined 表示当前不是可分集的 AI 短剧（查不到/解析不出），交回原有切集逻辑。
+  const resolveAiDuanjuNextEpisode = async (): Promise<
+    { key: string; title: string } | null | undefined
+  > => {
+    if (aiDuanjuNextRef.current !== undefined) {
+      return aiDuanjuNextRef.current;
+    }
+    const currentKey = aiDuanjuFileRef.current;
+    if (!currentKey) return undefined;
+    try {
+      const listResp = await fetch('/api/admin/ai-duanju/list');
+      if (!listResp.ok) return undefined;
+      const listData = await listResp.json().catch(() => ({}));
+      const videos = (listData?.videos || []) as Array<{
+        key: string;
+        title: string;
+      }>;
+      const currentVideo = videos.find((v) => v.key === currentKey);
+      if (!currentVideo) return undefined;
+      const current = parseAiDuanjuTitleForNext(currentVideo.title);
+      if (current.episode === null) return undefined;
+      const next = videos
+        .map((v) => ({ video: v, parsed: parseAiDuanjuTitleForNext(v.title) }))
+        .filter(
+          (item) =>
+            item.parsed.series === current.series &&
+            item.parsed.episode !== null &&
+            (item.parsed.episode as number) > (current.episode as number)
+        )
+        .sort(
+          (a, b) => (a.parsed.episode as number) - (b.parsed.episode as number)
+        )[0];
+      const result = next
+        ? { key: next.video.key, title: next.video.title }
+        : null;
+      aiDuanjuNextRef.current = result;
+      return result;
+    } catch (err) {
+      console.warn('AI 短剧下一集查询失败:', err);
+      return undefined;
+    }
+  };
+
+  // AI 短剧直链的「下一集」：与列表页点播完全一致地换一份新鲜中转地址后整页跳过去播，
+  // 播放记录随之按现有直链流程新建；已是最后一集时在播放器里给一句提示。
+  // 返回 false 表示不适用（非分集短剧/查询失败），交回原有切集逻辑。
+  const handleAiDuanjuNextEpisode = async (): Promise<boolean> => {
+    const next = await resolveAiDuanjuNextEpisode();
+    if (next === undefined) return false;
+    if (!next) {
+      if (artPlayerRef.current) {
+        artPlayerRef.current.notice.show = '已经是最后一集了';
+      }
+      return true;
+    }
+    try {
+      const resp = await fetch(
+        `/api/admin/ai-duanju/play-url?file=${encodeURIComponent(next.key)}`
+      );
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || typeof data?.url !== 'string' || !data.url) {
+        throw new Error(data?.error || '获取下一集播放链接失败');
+      }
+      const encoded = base58Encode(data.url as string);
+      if (!encoded) throw new Error('播放链接编码失败');
+      window.location.assign(
+        `/play?source=directplay&id=${encodeURIComponent(
+          encoded
+        )}&title=${encodeURIComponent(next.title)}`
+      );
+      return true;
+    } catch (err) {
+      console.warn('AI 短剧下一集跳转失败:', err);
+      if (artPlayerRef.current) {
+        artPlayerRef.current.notice.show = '下一集打开失败，请稍后再试';
+      }
+      return true;
+    }
+  };
+
   const handleNextEpisode = async () => {
+    // AI 短剧直链是单集记录，原有选集数组里没有下一集，单独处理
+    if (currentSourceRef.current === 'directplay' && aiDuanjuFileRef.current) {
+      const handled = await handleAiDuanjuNextEpisode();
+      if (handled) return;
+    }
+
     const d = detailRef.current;
     const idx = currentEpisodeIndexRef.current;
 
@@ -10955,7 +11100,17 @@ function PlayPageClient() {
         {/* 第一行：影片标题 */}
         <div className='py-1'>
           <h1 className={`text-xl font-semibold flex items-center gap-2 flex-wrap ${tmdbBackdrop ? 'text-white' : 'text-gray-900 dark:text-gray-100'}`}>
-            <span>
+            <span
+              className='cursor-pointer'
+              title='返回上一步'
+              onClick={() => {
+                if (window.history.length > 1) {
+                  window.history.back();
+                } else {
+                  router.push('/');
+                }
+              }}
+            >
               {videoTitle || '影片标题'}
               {shouldShowEpisodeLabel && (
                 <span className={tmdbBackdrop ? 'text-white opacity-80' : 'text-gray-500 dark:text-gray-400'}>
