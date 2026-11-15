@@ -1072,6 +1072,7 @@ function PlayPageClient() {
   const isSourceChangingRef = useRef(false); // 标记是否正在换源
   const aiDuanjuFileRef = useRef(''); // AI 短剧直链解析出的 B2 对象 key（非 AI 短剧为空）
   const aiDuanjuNextRef = useRef<{ key: string; title: string } | null | undefined>(undefined); // undefined=未查，null=没有下一集
+  const aiDuanjuSeriesRef = useRef<string | null | undefined>(undefined); // undefined=未查，null=解析不出剧名
 
   // 同步最新值到 refs
   useEffect(() => {
@@ -5643,6 +5644,7 @@ function PlayPageClient() {
           // 记下当前集的 B2 对象 key，供「下一集」按钮定位同剧下一集
           aiDuanjuFileRef.current = aiDuanjuFile;
           aiDuanjuNextRef.current = undefined;
+          aiDuanjuSeriesRef.current = undefined;
         } catch (refreshError) {
           console.warn('AI 短剧直链刷新失败，继续使用原地址:', refreshError);
         }
@@ -6544,6 +6546,71 @@ function PlayPageClient() {
         artPlayerRef.current.notice.show = '下一集打开失败，请稍后再试';
       }
       return true;
+    }
+  };
+
+  // 查当前 AI 短剧所属剧名：拉 AI 短剧列表、按 B2 对象 key 定位当前文件，再按「第N集」规则解析。
+  // 返回 undefined 表示解析不出（非分集短剧/查不到/列表里没这个文件），点标题时退回原有返回行为。
+  const resolveAiDuanjuSeriesName = async (): Promise<string | undefined> => {
+    if (aiDuanjuSeriesRef.current !== undefined) {
+      return aiDuanjuSeriesRef.current ?? undefined;
+    }
+    const currentKey = aiDuanjuFileRef.current;
+    if (!currentKey) return undefined;
+    try {
+      const listResp = await fetch('/api/admin/ai-duanju/list');
+      if (!listResp.ok) return undefined;
+      const listData = await listResp.json().catch(() => ({}));
+      const videos = (listData?.videos || []) as Array<{
+        key: string;
+        title: string;
+      }>;
+      const currentVideo = videos.find((v) => v.key === currentKey);
+      if (!currentVideo) return undefined;
+      const parsed = parseAiDuanjuTitleForNext(currentVideo.title);
+      const result =
+        parsed.episode !== null && parsed.series ? parsed.series : null;
+      aiDuanjuSeriesRef.current = result;
+      return result ?? undefined;
+    } catch (err) {
+      console.warn('AI 短剧剧名查询失败:', err);
+      return undefined;
+    }
+  };
+
+  // 点标题的去向（用户 2026-11-15 定）：
+  // - AI 短剧直链：回 AI 短剧列表页并自动展开该剧选集（带 ?series=剧名）；
+  // - 普通片源：回该剧的条目页——本站没有独立详情路由，卡片打开剧集用的就是
+  //   /play?source&id&title 入口（详情信息与全选集都在这一页），按当前 source/id 拼回去；
+  // - 目标都确定不了（直链解析不出、参数缺失等）：退回返回上一步，没历史回首页。
+  const handleTitleClick = async () => {
+    if (currentSourceRef.current === 'directplay' && aiDuanjuFileRef.current) {
+      const series = await resolveAiDuanjuSeriesName();
+      if (series) {
+        window.location.assign(
+          `/ai-duanju?series=${encodeURIComponent(series)}`
+        );
+        return;
+      }
+    } else if (
+      currentSource &&
+      currentId &&
+      currentSource !== 'directplay'
+    ) {
+      const params = new URLSearchParams({
+        source: currentSource,
+        id: currentId,
+      });
+      const entryTitle = detailRef.current?.title || videoTitle;
+      if (entryTitle) params.set('title', entryTitle);
+      if (videoYear) params.set('year', videoYear);
+      window.location.assign(`/play?${params.toString()}`);
+      return;
+    }
+    if (window.history.length > 1) {
+      window.history.back();
+    } else {
+      router.push('/');
     }
   };
 
@@ -11102,14 +11169,14 @@ function PlayPageClient() {
           <h1 className={`text-xl font-semibold flex items-center gap-2 flex-wrap ${tmdbBackdrop ? 'text-white' : 'text-gray-900 dark:text-gray-100'}`}>
             <span
               className='cursor-pointer'
-              title='返回上一步'
-              onClick={() => {
-                if (window.history.length > 1) {
-                  window.history.back();
-                } else {
-                  router.push('/');
-                }
-              }}
+              title={
+                isDirectPlay
+                  ? '回到剧集列表'
+                  : currentSource && currentId
+                    ? '回到剧集页'
+                    : '返回上一步'
+              }
+              onClick={handleTitleClick}
             >
               {videoTitle || '影片标题'}
               {shouldShowEpisodeLabel && (

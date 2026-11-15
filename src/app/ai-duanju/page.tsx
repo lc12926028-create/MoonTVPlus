@@ -9,7 +9,8 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import Link from 'next/link';
-import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useRef, useState } from 'react';
 
 import { getAuthInfoFromBrowserCookie } from '@/lib/auth';
 import { base58Encode } from '@/lib/utils';
@@ -155,6 +156,10 @@ function AiDuanjuPageClient() {
   const [errorMessage, setErrorMessage] = useState('');
   const [playingKey, setPlayingKey] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  // 播放页点标题跳来时带 ?series=剧名：列表加载完自动展开该剧选集并滚到它
+  const searchParams = useSearchParams();
+  const targetSeries = searchParams.get('series');
+  const seriesLocateHandledRef = useRef(false);
 
   const toggleGroup = (name: string) => {
     setExpandedGroups((prev) => {
@@ -206,6 +211,25 @@ function AiDuanjuPageClient() {
 
     loadVideos();
   }, []);
+
+  useEffect(() => {
+    if (state !== 'ready' || !targetSeries || seriesLocateHandledRef.current) {
+      return;
+    }
+    const group = groupAiDuanjuVideos(videos).find(
+      (g) => g.name === targetSeries
+    );
+    if (!group) return; // 列表里找不到该剧：什么都不做，正常显示列表
+    seriesLocateHandledRef.current = true;
+    if (group.episodes.length > 1) {
+      setExpandedGroups((prev) => new Set(prev).add(group.name));
+    }
+    window.setTimeout(() => {
+      document
+        .getElementById(`ai-duanju-series-${encodeURIComponent(group.name)}`)
+        ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }, 80);
+  }, [state, videos, targetSeries]);
 
   const handlePlay = async (video: AiDuanjuVideo) => {
     if (playingKey) return;
@@ -334,6 +358,7 @@ function AiDuanjuPageClient() {
                 return (
                   <div
                     key={video.key}
+                    id={`ai-duanju-series-${encodeURIComponent(group.name)}`}
                     className='rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/60 p-4 flex flex-col gap-3'
                   >
                     <div className='flex items-start gap-3'>
@@ -387,6 +412,7 @@ function AiDuanjuPageClient() {
               return (
                 <div
                   key={`group-${group.name}`}
+                  id={`ai-duanju-series-${encodeURIComponent(group.name)}`}
                   className='rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/60 p-4 flex flex-col gap-3'
                 >
                   <div className='flex items-start gap-3'>
