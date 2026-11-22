@@ -216,10 +216,39 @@ export async function createPlayProxyUrl(
 /**
  * 列出 B2 桶内的视频文件（S3 ListObjectsV2，服务端签名请求）
  * 按最后修改时间倒序返回。
+ *
+ * 注意：S3 单次 ListObjectsV2 最多返回 max-keys 条，并且是按 key 字典序
+ * 截断（不是按上传时间）。桶内文件超过 100 个时，必须用 continuation-token
+ * 翻页取全量，否则排在后面的剧永远不会出现在列表里。2026-11-21 用户报
+ * “保留的几部剧在 AI 短剧列表里不见了”即为此因：当时桶内 218 个文件，
+ * 旧实现只取了字典序前 100 个，《荒岛美人劫》《淫魔重生》《黑暗圣经》
+ * 《沉默的羔羊》等全被截在外面，而文件本身都在桶里。
  */
 export async function listB2Videos(
   settings: B2Settings
 ): Promise<B2Video[]> {
+  const videos: B2Video[] = [];
+  let continuationToken: string | undefined;
+  // 每页 100 条，最多翻 20 页（即 2000 个文件），防死循环
+  for (let page = 0; page < 20; page++) {
+    const { videos: pageVideos, nextContinuationToken } =
+      await listB2VideosPage(settings, continuationToken);
+    videos.push(...pageVideos);
+    if (!nextContinuationToken) {
+      break;
+    }
+    continuationToken = nextContinuationToken;
+  }
+
+  videos.sort((a, b) => (a.lastModified < b.lastModified ? 1 : -1));
+  return videos;
+}
+
+/** 取一页 B2 对象列表（单次最多 100 条），返回本页视频与下一页 token */
+async function listB2VideosPage(
+  settings: B2Settings,
+  continuationToken?: string
+): Promise<{ videos: B2Video[]; nextContinuationToken?: string }> {
   const { amzDate, dateStamp } = amzDates(new Date());
   const scope = `${dateStamp}/${settings.region}/s3/aws4_request`;
   const emptyHash = await sha256Hex('');
@@ -228,6 +257,9 @@ export async function listB2Videos(
     'list-type': '2',
     'max-keys': '100',
   };
+  if (continuationToken) {
+    query['continuation-token'] = continuationToken;
+  }
   const canonicalQueryString = Object.keys(query)
     .sort()
     .map(
@@ -313,6 +345,12 @@ export async function listB2Videos(
     });
   }
 
-  videos.sort((a, b) => (a.lastModified < b.lastModified ? 1 : -1));
-  return videos;
+  const isTruncated = /<IsTruncated>true<\/IsTruncated>/.test(xml);
+  const nextTokenMatch = xml.match(
+    /<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/
+  );
+  const nextContinuationToken =
+    isTruncated && nextTokenMatch ? nextTokenMatch[1].trim() : undefined;
+
+  return { videos, nextContinuationToken };
 }
