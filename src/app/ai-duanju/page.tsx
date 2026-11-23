@@ -53,6 +53,39 @@ function formatDate(iso: string): string {
   });
 }
 
+/** 删除标记切换按钮：未标记为红色描边，已标记为红色实心「已标记·取消」 */
+function MarkToggleButton({
+  marked,
+  label,
+  onClick,
+}: {
+  marked: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={
+        marked
+          ? 'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-medium hover:bg-red-700 transition-colors'
+          : 'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 text-xs font-medium hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors'
+      }
+    >
+      {marked ? '已标记·取消' : label}
+    </button>
+  );
+}
+
+/** 已标记条目的「待删除」徽标 */
+function PendingDeleteBadge() {
+  return (
+    <span className='shrink-0 px-1.5 py-0.5 rounded bg-red-600 text-white text-[10px] font-medium'>
+      待删除
+    </span>
+  );
+}
+
 interface AiDuanjuEpisode {
   video: AiDuanjuVideo;
   episode: number | null; // null = 无「第N集」标记（合集/单文件）
@@ -156,6 +189,12 @@ function AiDuanjuPageClient() {
   const [errorMessage, setErrorMessage] = useState('');
   const [playingKey, setPlayingKey] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  // 删除标记：episodes 存 B2 对象 key，series 存剧名分组名；只登记意向，不删文件
+  const [markedEpisodes, setMarkedEpisodes] = useState<Set<string>>(
+    new Set()
+  );
+  const [markedSeries, setMarkedSeries] = useState<Set<string>>(new Set());
+  const [marksError, setMarksError] = useState('');
   // 播放页点标题跳来时带 ?series=剧名：列表加载完自动展开该剧选集并滚到它
   const searchParams = useSearchParams();
   const targetSeries = searchParams.get('series');
@@ -201,6 +240,23 @@ function AiDuanjuPageClient() {
         const list = (result.videos || []) as AiDuanjuVideo[];
         setVideos(list);
         setState(list.length === 0 ? 'empty' : 'ready');
+        // 删除标记单独拉取：失败不影响列表，按未标记渲染
+        try {
+          const marksResponse = await fetch(
+            '/api/admin/ai-duanju/delete-marks'
+          );
+          if (marksResponse.ok) {
+            const marks = await marksResponse.json().catch(() => ({}));
+            setMarkedEpisodes(
+              new Set(Array.isArray(marks.episodes) ? marks.episodes : [])
+            );
+            setMarkedSeries(
+              new Set(Array.isArray(marks.series) ? marks.series : [])
+            );
+          }
+        } catch {
+          // 忽略：标记加载失败时全部按未标记显示
+        }
       } catch (error) {
         setErrorMessage(
           error instanceof Error ? error.message : '获取列表失败'
@@ -258,6 +314,65 @@ function AiDuanjuPageClient() {
       );
       setState('error');
       setPlayingKey(null);
+    }
+  };
+
+  /**
+   * 切换删除标记：先乐观更新本地状态，接口返回全量后对齐；
+   * 失败则恢复原状态并在列表上方红框提示。本操作只登记意向，不删文件。
+   */
+  const toggleMark = async (
+    type: 'episode' | 'series',
+    target: string
+  ) => {
+    const prevEpisodes = markedEpisodes;
+    const prevSeries = markedSeries;
+    const isEpisode = type === 'episode';
+    const nextMarked = isEpisode
+      ? !prevEpisodes.has(target)
+      : !prevSeries.has(target);
+
+    const nextEpisodes = new Set(prevEpisodes);
+    const nextSeries = new Set(prevSeries);
+    if (isEpisode) {
+      if (nextMarked) {
+        nextEpisodes.add(target);
+      } else {
+        nextEpisodes.delete(target);
+      }
+    } else {
+      if (nextMarked) {
+        nextSeries.add(target);
+      } else {
+        nextSeries.delete(target);
+      }
+    }
+    setMarkedEpisodes(nextEpisodes);
+    setMarkedSeries(nextSeries);
+    setMarksError('');
+
+    try {
+      const response = await fetch('/api/admin/ai-duanju/delete-marks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, target, marked: nextMarked }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result.error || '保存标记失败');
+      }
+      setMarkedEpisodes(
+        new Set(Array.isArray(result.episodes) ? result.episodes : [])
+      );
+      setMarkedSeries(
+        new Set(Array.isArray(result.series) ? result.series : [])
+      );
+    } catch (error) {
+      setMarkedEpisodes(prevEpisodes);
+      setMarkedSeries(prevSeries);
+      setMarksError(
+        error instanceof Error ? error.message : '保存标记失败，请重试'
+      );
     }
   };
 
@@ -350,24 +465,45 @@ function AiDuanjuPageClient() {
         )}
 
         {state === 'ready' && (
-          <div className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4'>
+          <div>
+            <p className='mb-3 text-xs text-gray-500 dark:text-gray-400'>
+              「标记删除」「整部下架」只登记下架意向，不会立即删除文件；点错了可再点一次取消。
+            </p>
+            {marksError && (
+              <div className='mb-4 rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-4 py-2.5 text-sm text-red-600 dark:text-red-400'>
+                标记保存失败：{marksError}
+              </div>
+            )}
+            <div className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4'>
             {groups.map((group) => {
               // 只有一集（或合集单文件）：保持原卡片，一点即播，不套展开层
               if (group.episodes.length === 1) {
                 const video = group.episodes[0].video;
+                const seriesMarked = markedSeries.has(group.name);
+                const episodeMarked =
+                  seriesMarked || markedEpisodes.has(video.key);
                 return (
                   <div
                     key={video.key}
                     id={`ai-duanju-series-${encodeURIComponent(group.name)}`}
-                    className='rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/60 p-4 flex flex-col gap-3'
+                    className={`rounded-xl border bg-white dark:bg-gray-800/60 p-4 flex flex-col gap-3 ${
+                      episodeMarked
+                        ? 'border-red-400 dark:border-red-500'
+                        : 'border-gray-200 dark:border-gray-700'
+                    }`}
                   >
                     <div className='flex items-start gap-3'>
                       <div className='w-12 h-12 shrink-0 rounded-lg bg-green-100 dark:bg-green-900/40 flex items-center justify-center'>
                         <Clapperboard className='w-6 h-6 text-green-600 dark:text-green-400' />
                       </div>
                       <div className='min-w-0'>
-                        <h2 className='font-semibold text-gray-900 dark:text-gray-100 truncate'>
-                          {video.title}
+                        <h2
+                          className={`font-semibold text-gray-900 dark:text-gray-100 truncate flex items-center gap-2 ${
+                            episodeMarked ? 'line-through' : ''
+                          }`}
+                        >
+                          <span className='truncate'>{video.title}</span>
+                          {episodeMarked && <PendingDeleteBadge />}
                         </h2>
                         <p className='text-xs text-gray-500 dark:text-gray-400 truncate'>
                           {video.key}
@@ -392,6 +528,18 @@ function AiDuanjuPageClient() {
                       )}
                       {playingKey === video.key ? '正在准备播放...' : '播放'}
                     </button>
+                    <div className='flex items-center gap-2'>
+                      <MarkToggleButton
+                        marked={markedEpisodes.has(video.key)}
+                        label='标记删除'
+                        onClick={() => toggleMark('episode', video.key)}
+                      />
+                      <MarkToggleButton
+                        marked={seriesMarked}
+                        label='整部下架'
+                        onClick={() => toggleMark('series', group.name)}
+                      />
+                    </div>
                   </div>
                 );
               }
@@ -409,23 +557,40 @@ function AiDuanjuPageClient() {
                 ''
               );
               const expanded = expandedGroups.has(group.name);
+              const groupMarked = markedSeries.has(group.name);
               return (
                 <div
                   key={`group-${group.name}`}
                   id={`ai-duanju-series-${encodeURIComponent(group.name)}`}
-                  className='rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/60 p-4 flex flex-col gap-3'
+                  className={`rounded-xl border bg-white dark:bg-gray-800/60 p-4 flex flex-col gap-3 ${
+                    groupMarked
+                      ? 'border-red-400 dark:border-red-500'
+                      : 'border-gray-200 dark:border-gray-700'
+                  }`}
                 >
                   <div className='flex items-start gap-3'>
                     <div className='w-12 h-12 shrink-0 rounded-lg bg-green-100 dark:bg-green-900/40 flex items-center justify-center'>
                       <Clapperboard className='w-6 h-6 text-green-600 dark:text-green-400' />
                     </div>
                     <div className='min-w-0'>
-                      <h2 className='font-semibold text-gray-900 dark:text-gray-100 truncate'>
-                        {group.name}
+                      <h2
+                        className={`font-semibold text-gray-900 dark:text-gray-100 truncate flex items-center gap-2 ${
+                          groupMarked ? 'line-through' : ''
+                        }`}
+                      >
+                        <span className='truncate'>{group.name}</span>
+                        {groupMarked && <PendingDeleteBadge />}
                       </h2>
                       <p className='text-xs text-gray-500 dark:text-gray-400 truncate'>
                         共 {group.episodes.length} 集
                       </p>
+                    </div>
+                    <div className='ml-auto shrink-0'>
+                      <MarkToggleButton
+                        marked={groupMarked}
+                        label='整部下架'
+                        onClick={() => toggleMark('series', group.name)}
+                      />
                     </div>
                   </div>
                   <div className='text-xs text-gray-500 dark:text-gray-400 flex items-center gap-3'>
@@ -447,26 +612,47 @@ function AiDuanjuPageClient() {
                   </button>
                   {expanded && (
                     <div className='flex flex-wrap gap-2'>
-                      {group.episodes.map((ep) => (
-                        <button
-                          key={ep.video.key}
-                          onClick={() => handlePlay(ep.video)}
-                          disabled={playingKey !== null}
-                          className='inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-green-600/50 text-green-700 dark:text-green-400 text-sm hover:bg-green-50 dark:hover:bg-green-900/30 disabled:opacity-60 transition-colors'
-                        >
-                          {playingKey === ep.video.key ? (
-                            <Loader2 className='w-3.5 h-3.5 animate-spin' />
-                          ) : (
-                            <Play className='w-3.5 h-3.5' />
-                          )}
-                          第{ep.episode}集
-                        </button>
-                      ))}
+                      {group.episodes.map((ep) => {
+                        const epMarked =
+                          groupMarked || markedEpisodes.has(ep.video.key);
+                        return (
+                          <div
+                            key={ep.video.key}
+                            className='flex flex-col items-stretch gap-1'
+                          >
+                            <button
+                              onClick={() => handlePlay(ep.video)}
+                              disabled={playingKey !== null}
+                              className={`inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg border text-sm disabled:opacity-60 transition-colors ${
+                                epMarked
+                                  ? 'border-red-400 dark:border-red-500 text-red-600 dark:text-red-400 line-through hover:bg-red-50 dark:hover:bg-red-900/30'
+                                  : 'border-green-600/50 text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30'
+                              }`}
+                            >
+                              {playingKey === ep.video.key ? (
+                                <Loader2 className='w-3.5 h-3.5 animate-spin' />
+                              ) : (
+                                <Play className='w-3.5 h-3.5' />
+                              )}
+                              第{ep.episode}集
+                              {epMarked && <PendingDeleteBadge />}
+                            </button>
+                            <MarkToggleButton
+                              marked={markedEpisodes.has(ep.video.key)}
+                              label='标记删除'
+                              onClick={() =>
+                                toggleMark('episode', ep.video.key)
+                              }
+                            />
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
               );
             })}
+            </div>
           </div>
         )}
       </div>
