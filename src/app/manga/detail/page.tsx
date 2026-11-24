@@ -116,9 +116,12 @@ export default function MangaDetailPage() {
   const returnTo = searchParams.get('returnTo') || '/manga';
   const [detail, setDetail] = useState<MangaDetail | null>(null);
   const [history, setHistory] = useState<Record<string, MangaReadRecord>>({});
+  // 阅读记录是否已经取回：章节预热要等它落定，才知道该预热续读话还是第一话
+  const [historySettled, setHistorySettled] = useState(false);
   const [shelf, setShelf] = useState<Record<string, MangaShelfItem>>({});
   const [descOrder, setDescOrder] = useState(true);
   const clearedOnOpenRef = useRef<string | null>(null);
+  const prefetchedPagesKeyRef = useRef<string | null>(null);
 
   const key = `${sourceId}+${mangaId}`;
   const currentRecord = history[key];
@@ -144,7 +147,8 @@ export default function MangaDetailPage() {
 
     getAllMangaReadRecords()
       .then(setHistory)
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => setHistorySettled(true));
     getAllMangaShelf()
       .then(setShelf)
       .catch(() => undefined);
@@ -177,6 +181,32 @@ export default function MangaDetailPage() {
         .map((chapter) => chapter.id)
     );
   }, [chronologicalChapters, unreadChapterCount]);
+
+  // 章节预热：详情与阅读记录都落定后，后台先把最可能点开的那一话的页图拉起来——
+  // 有阅读进度就预热续读的那一话，否则预热第一话。章节图片要等后端把整话下载
+  // 落地才有，提前触发能让用户真正点开时少等。只发一次、失败静默、不阻塞渲染。
+  useEffect(() => {
+    if (!detail || !historySettled) return;
+
+    const targetChapterId =
+      currentRecord?.chapterId || chronologicalChapters[0]?.id;
+    if (!targetChapterId) return;
+
+    const prefetchKey = `${key}:${targetChapterId}`;
+    if (prefetchedPagesKeyRef.current === prefetchKey) return;
+    prefetchedPagesKeyRef.current = prefetchKey;
+
+    const params = new URLSearchParams({ chapterId: targetChapterId });
+    if (sourceId) params.set('sourceId', sourceId);
+    fetch(`/api/manga/pages?${params.toString()}`).catch(() => undefined);
+  }, [
+    chronologicalChapters,
+    currentRecord,
+    detail,
+    historySettled,
+    key,
+    sourceId,
+  ]);
 
   useEffect(() => {
     const shelfItem = shelf[key];
@@ -436,3 +466,4 @@ export default function MangaDetailPage() {
     </div>
   );
 }
+
