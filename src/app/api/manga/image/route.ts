@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthorizedUsername } from '../_utils';
+import {
+  HM92_IMAGE_PATH_PREFIX,
+  buildHm92AuthHeader,
+  getHm92Config,
+} from '@/lib/hm92.client';
 import { getSuwayomiConfig, loginWithSimpleAuth } from '@/lib/suwayomi.client';
 
 export const runtime = 'nodejs';
@@ -32,35 +37,74 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: '缺少 path 参数' }, { status: 400 });
     }
 
-    const config = await getSuwayomiConfig();
-    const upstreamUrl = resolveUpstreamUrl(config.serverBaseUrl, pathOrUrl);
-    const buildHeaders = async (
+    // 两种上游：Suwayomi 图片（默认）与 92hm.top 桥接图片（path 以 hm92: 开头，
+    // 其余部分是源站图片的绝对地址，由桥接服务代抓）。两者共用下面的重试与回流逻辑。
+    let upstreamUrl: string;
+    let buildHeaders: (
       forceRelogin: boolean
-    ): Promise<HeadersInit | undefined> => {
-      if (config.authMode === 'basic_auth') {
-        if (!config.username || !config.password) {
-          throw new Error('Suwayomi basic_auth 缺少用户名或密码');
+    ) => Promise<HeadersInit | undefined>;
+    let allowSimpleRelogin = false;
+    let errorLabel: string;
+
+    if (pathOrUrl.startsWith(HM92_IMAGE_PATH_PREFIX)) {
+      const sourceImageUrl = pathOrUrl.slice(HM92_IMAGE_PATH_PREFIX.length);
+      if (!sourceImageUrl) {
+        return NextResponse.json({ error: '缺少图片地址' }, { status: 400 });
+      }
+
+      const hm92Config = await getHm92Config();
+      if (!hm92Config) {
+        return NextResponse.json(
+          { error: '92hm.top 桥接未启用或未配置' },
+          { status: 404 }
+        );
+      }
+
+      upstreamUrl = `${
+        hm92Config.serverBaseUrl
+      }/api/image?url=${encodeURIComponent(sourceImageUrl)}`;
+      errorLabel = '92hm 图片请求失败';
+      buildHeaders = async () => {
+        const authorization = buildHm92AuthHeader(hm92Config);
+        return authorization
+          ? new Headers({ Authorization: authorization })
+          : undefined;
+      };
+    } else {
+      const config = await getSuwayomiConfig();
+      upstreamUrl = resolveUpstreamUrl(config.serverBaseUrl, pathOrUrl);
+      errorLabel = 'Suwayomi 图片请求失败';
+      allowSimpleRelogin = config.authMode === 'simple_login';
+      buildHeaders = async (
+        forceRelogin: boolean
+      ): Promise<HeadersInit | undefined> => {
+        if (config.authMode === 'basic_auth') {
+          if (!config.username || !config.password) {
+            throw new Error('Suwayomi basic_auth 缺少用户名或密码');
+          }
+
+          return new Headers({
+            Authorization: `Basic ${Buffer.from(
+              `${config.username}:${config.password}`
+            ).toString('base64')}`,
+          });
         }
 
-        return new Headers({
-          Authorization: `Basic ${Buffer.from(`${config.username}:${config.password}`).toString('base64')}`,
-        });
-      }
+        if (config.authMode === 'simple_login') {
+          return new Headers({
+            Cookie: await loginWithSimpleAuth(config, forceRelogin),
+          });
+        }
 
-      if (config.authMode === 'simple_login') {
-        return new Headers({
-          Cookie: await loginWithSimpleAuth(config, forceRelogin),
-        });
-      }
-
-      return undefined;
-    };
+        return undefined;
+      };
+    }
 
     // 章节首次打开时 Suwayomi 需要先把整话图片下载到本地，未下载完的页会先返回 404；
-    // 这里对 404/5xx 做有界重试（最多 8 次、间隔 3 秒），让图片等下载落地后再返回，
-    // 避免阅读页首次打开出现整话空白。
+    // 这里对 404/5xx 做有界重试（最多 8 次、间隔 1.2 秒），让图片等下载落地后再返回，
+    // 避免阅读页首次打开出现整话空白。间隔取小一点，减少图片“差一点就好”的等待量化。
     const MAX_IMAGE_ATTEMPTS = 8;
-    const IMAGE_RETRY_DELAY_MS = 3000;
+    const IMAGE_RETRY_DELAY_MS = 1200;
     let response: Response | null = null;
     for (let attempt = 1; attempt <= MAX_IMAGE_ATTEMPTS; attempt++) {
       response = await fetch(upstreamUrl, {
@@ -68,7 +112,7 @@ export async function GET(request: NextRequest) {
         cache: 'no-store',
       });
 
-      if (response.status === 401 && config.authMode === 'simple_login') {
+      if (response.status === 401 && allowSimpleRelogin) {
         response = await fetch(upstreamUrl, {
           headers: await buildHeaders(true),
           cache: 'no-store',
@@ -83,7 +127,7 @@ export async function GET(request: NextRequest) {
 
     if (!response || !response.ok) {
       return NextResponse.json(
-        { error: `Suwayomi 图片请求失败: ${response?.status ?? 502}` },
+        { error: `${errorLabel}: ${response?.status ?? 502}` },
         { status: response?.status ?? 502 }
       );
     }

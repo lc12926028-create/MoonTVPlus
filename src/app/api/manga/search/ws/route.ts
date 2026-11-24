@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+import {
+  HM92_SOURCE_ID,
+  HM92_SOURCE_NAME,
+  hm92Client,
+} from '@/lib/hm92.client';
 import { suwayomiClient } from '@/lib/suwayomi.client';
 
 import { getAuthorizedUsername } from '../../_utils';
@@ -38,7 +43,20 @@ export async function GET(request: NextRequest) {
       };
 
       try {
-        const sources = await suwayomiClient.getSearchSources(sourceId);
+        // 92hm.top 桥接源作为一个伪源并入同一套流式分发：指定它时只查桥接，
+        // 全部来源时在 Suwayomi 源之后追加它。
+        const hm92PseudoSource = {
+          id: HM92_SOURCE_ID,
+          name: HM92_SOURCE_NAME,
+          displayName: HM92_SOURCE_NAME,
+        };
+        const sources =
+          sourceId === HM92_SOURCE_ID
+            ? [hm92PseudoSource]
+            : await suwayomiClient.getSearchSources(sourceId);
+        if (!sourceId && (await hm92Client.isEnabled())) {
+          sources.push(hm92PseudoSource);
+        }
         let completedSources = 0;
         let totalResults = 0;
         const failedSources: Array<{ sourceId: string; sourceName: string; error: string }> = [];
@@ -48,7 +66,13 @@ export async function GET(request: NextRequest) {
         await Promise.all(
           sources.map(async (source) => {
             try {
-              const result = await suwayomiClient.searchMangaSource(q, source, page);
+              const result =
+                source.id === HM92_SOURCE_ID
+                  ? {
+                      source,
+                      results: await hm92Client.searchMangaSource(q, page),
+                    }
+                  : await suwayomiClient.searchMangaSource(q, source, page);
               completedSources += 1;
               totalResults += result.results.length;
               send({

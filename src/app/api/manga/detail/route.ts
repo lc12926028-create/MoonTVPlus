@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+import { HM92_SOURCE_ID, hm92Client } from '@/lib/hm92.client';
 import { suwayomiClient } from '@/lib/suwayomi.client';
 
 import { getAuthorizedUsername } from '../_utils';
@@ -19,6 +20,20 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: '缺少 mangaId 或 sourceId' }, { status: 400 });
     }
 
+    // 92hm.top 桥接源走桥接详情，其余源走 Suwayomi
+    if (sourceId === HM92_SOURCE_ID) {
+      const bridgeDetail = await hm92Client.getMangaDetail({
+        mangaId,
+        title: searchParams.get('title') || undefined,
+        cover: searchParams.get('cover') || undefined,
+        sourceName: searchParams.get('sourceName') || undefined,
+        description: searchParams.get('description') || undefined,
+        author: searchParams.get('author') || undefined,
+        status: searchParams.get('status') || undefined,
+      });
+      return NextResponse.json(bridgeDetail);
+    }
+
     const detail = await suwayomiClient.getMangaDetail({
       mangaId,
       sourceId,
@@ -35,3 +50,4 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }
 }
+
