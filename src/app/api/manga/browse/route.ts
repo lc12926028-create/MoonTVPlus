@@ -9,6 +9,9 @@ export const runtime = 'nodejs';
 
 type BrowseMode = 'popular' | 'latest' | 'completed' | 'ongoing';
 
+// Suwayomi「92漫画」扩展的源 id：只有它支持下面这套筛选位
+const MANHUA_92_SOURCE_ID = '1520913911854846698';
+
 // 92漫画源的筛选位置，与 Suwayomi 扩展的筛选定义一一对应。
 // 客户端只传模式与分类序号，position 只在这里组装，不接受前端直传。
 const FILTER_POSITION = {
@@ -53,6 +56,24 @@ export async function GET(request: NextRequest) {
         results: bridgeResult.mangas,
         hasNextPage: bridgeResult.hasNextPage,
       });
+    }
+
+    // FILTER_POSITION 是 92漫画扩展专属的筛选位，其它 Suwayomi 源的筛选列表长度不一，
+    // 带位下发会让服务端抛 ArrayIndexOutOfBounds。非 92 源改走源生 POPULAR/LATEST，
+    // 已完结/连载中用返回结果的状态在本页内过滤（近似实现，分类下拉对这类源不生效）。
+    if (sourceId !== MANHUA_92_SOURCE_ID) {
+      const result = await suwayomiClient.getRecommendedManga(
+        sourceId,
+        mode === 'latest' ? 'LATEST' : 'POPULAR',
+        page
+      );
+      let mangas = result.mangas;
+      if (mode === 'completed') {
+        mangas = mangas.filter((manga) => manga.status === '已完结');
+      } else if (mode === 'ongoing') {
+        mangas = mangas.filter((manga) => manga.status === '连载中');
+      }
+      return NextResponse.json({ results: mangas, hasNextPage: result.hasNextPage });
     }
 
     const filters: Array<{ position: number; selectState: number }> = [];
