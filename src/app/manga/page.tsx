@@ -236,6 +236,10 @@ export default function MangaRecommendPage() {
 
   // 本地源（id 为 '0'）没有源筛选，保持原来的热门/最新推荐口径。
   const isLocalSource = sourceId === '0';
+  // 92hm.top 桥接源同样只有热门/最新两个列表：页签与本地源一致，
+  // 数据走 /api/manga/browse 的桥接分支（热门=排行、最新=更新）。
+  const isHm92Source = sourceId === 'hm92top';
+  const usesRecommendTabs = isLocalSource || isHm92Source;
 
   const fetchRecommend = useCallback(
     async (nextPage: number, append: boolean) => {
@@ -253,6 +257,12 @@ export default function MangaRecommendPage() {
           ? `/api/manga/recommend?${new URLSearchParams({
               sourceId,
               type: recommendType,
+              page: String(nextPage),
+            }).toString()}`
+          : isHm92Source
+          ? `/api/manga/browse?${new URLSearchParams({
+              sourceId,
+              mode: recommendType === 'LATEST' ? 'latest' : 'popular',
               page: String(nextPage),
             }).toString()}`
           : `/api/manga/browse?${new URLSearchParams({
@@ -292,6 +302,7 @@ export default function MangaRecommendPage() {
       filterRegion,
       filterType,
       filterYear,
+      isHm92Source,
       isLocalSource,
       recommendType,
       sourceId,
@@ -398,7 +409,7 @@ export default function MangaRecommendPage() {
     setShelf((prev) => ({ ...prev, [key]: shelfItem }));
   };
 
-  const badge = isLocalSource
+  const badge = usesRecommendTabs
     ? recommendType === 'POPULAR'
       ? '热门'
       : '最新'
@@ -462,7 +473,7 @@ export default function MangaRecommendPage() {
               </button>
             ))}
           </div>
-          {isLocalSource ? (
+          {usesRecommendTabs ? (
             <div className='flex flex-nowrap gap-1 border-b border-library-edge dark:border-library-night-edge'>
               {recommendOptions.map((option) => (
                 <button
@@ -598,3 +609,4 @@ export default function MangaRecommendPage() {
     </div>
   );
 }
+
