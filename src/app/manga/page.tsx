@@ -1,6 +1,6 @@
 'use client';
 
-import { Compass, Flame, Sparkles } from 'lucide-react';
+import { BookCheck, Compass, Flame, PenLine, Sparkles } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -38,6 +38,78 @@ import ShelfChipButton from '@/components/media/ShelfChipButton';
 /** 书墙：比通用网格更密，一眼看过去全是封面。 */
 const WALL_CLASS =
   'grid-cols-3 gap-x-3 gap-y-5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-7 xl:grid-cols-8';
+
+/** 非本地源（92漫画）的书库浏览模式，走 /api/manga/browse 的源筛选。 */
+type MangaBrowseMode = 'popular' | 'latest' | 'completed' | 'ongoing';
+
+// 分类筛选选项与 92漫画源的筛选定义（按类型/按地区/按年份）一一对应，
+// 数组下标即下发给后端的 selectState，0 为「全部」。
+const MANGA_FILTER_TYPE_OPTIONS = [
+  '全部',
+  '儿童漫画',
+  '少年漫画',
+  '少女漫画',
+  '青年漫画',
+];
+const MANGA_FILTER_REGION_OPTIONS = [
+  '全部',
+  '日本',
+  '大陆',
+  '香港',
+  '台湾',
+  '欧美',
+  '韩国',
+  '其他',
+];
+const MANGA_FILTER_YEAR_OPTIONS = [
+  '全部',
+  '2000年前',
+  '2001年',
+  '2002年',
+  '2003年',
+  '2004年',
+  '2005年',
+  '2006年',
+  '2007年',
+  '2008年',
+  '2009年',
+  '2010年',
+  '2011年',
+  '2012年',
+  '2013年',
+  '2014年',
+  '2015年',
+  '2016年',
+];
+
+function FilterSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  options: string[];
+  onChange: (next: number) => void;
+}) {
+  return (
+    <label className='flex items-center gap-1.5 text-sm text-library-muted dark:text-library-night-muted'>
+      {label}
+      <select
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className='rounded-md border border-library-edge bg-library-card px-1.5 py-1 text-sm text-library-ink dark:border-library-night-edge dark:bg-library-night-card dark:text-library-night-ink'
+      >
+        {options.map((option, index) => (
+          <option key={option} value={index}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 function buildDetailHref(item: {
   id: string;
@@ -103,6 +175,11 @@ export default function MangaRecommendPage() {
   const [recommendSettled, setRecommendSettled] = useState(false);
   const [recommendType, setRecommendType] =
     useState<MangaRecommendType>('POPULAR');
+  // 非本地源的书库浏览状态（模式 + 分类筛选）；本地源仍走 recommendType。
+  const [browseMode, setBrowseMode] = useState<MangaBrowseMode>('popular');
+  const [filterType, setFilterType] = useState(0);
+  const [filterRegion, setFilterRegion] = useState(0);
+  const [filterYear, setFilterYear] = useState(0);
   const [result, setResult] = useState<MangaRecommendResult>({
     mangas: [],
     hasNextPage: false,
@@ -157,6 +234,9 @@ export default function MangaRecommendPage() {
       .catch(() => undefined);
   }, []);
 
+  // 本地源（id 为 '0'）没有源筛选，保持原来的热门/最新推荐口径。
+  const isLocalSource = sourceId === '0';
+
   const fetchRecommend = useCallback(
     async (nextPage: number, append: boolean) => {
       if (!sourceId) return;
@@ -169,20 +249,31 @@ export default function MangaRecommendPage() {
       }
 
       try {
-        const params = new URLSearchParams({
-          sourceId,
-          type: recommendType,
-          page: String(nextPage),
-        });
-        const res = await fetch(`/api/manga/recommend?${params.toString()}`);
+        const url = isLocalSource
+          ? `/api/manga/recommend?${new URLSearchParams({
+              sourceId,
+              type: recommendType,
+              page: String(nextPage),
+            }).toString()}`
+          : `/api/manga/browse?${new URLSearchParams({
+              sourceId,
+              mode: browseMode,
+              type: String(filterType),
+              region: String(filterRegion),
+              year: String(filterYear),
+              page: String(nextPage),
+            }).toString()}`;
+        const res = await fetch(url);
         const data = (await res.json()) as MangaRecommendResult & {
+          results?: MangaSearchItem[];
           error?: string;
         };
         if (!res.ok) throw new Error(data.error || '获取推荐失败');
 
+        const mangas = isLocalSource ? data.mangas : data.results || [];
         setPage(nextPage);
         setResult((prev) => ({
-          mangas: append ? [...prev.mangas, ...data.mangas] : data.mangas,
+          mangas: append ? [...prev.mangas, ...mangas] : mangas,
           hasNextPage: data.hasNextPage,
         }));
       } catch (err) {
@@ -196,7 +287,15 @@ export default function MangaRecommendPage() {
         if (!append) setRecommendSettled(true);
       }
     },
-    [recommendType, sourceId]
+    [
+      browseMode,
+      filterRegion,
+      filterType,
+      filterYear,
+      isLocalSource,
+      recommendType,
+      sourceId,
+    ]
   );
 
   useEffect(() => {
@@ -246,6 +345,32 @@ export default function MangaRecommendPage() {
     []
   );
 
+  const browseOptions = useMemo(
+    () => [
+      {
+        label: '热门',
+        value: 'popular',
+        icon: <Flame className='h-3.5 w-3.5' />,
+      },
+      {
+        label: '最新',
+        value: 'latest',
+        icon: <Sparkles className='h-3.5 w-3.5' />,
+      },
+      {
+        label: '已完结',
+        value: 'completed',
+        icon: <BookCheck className='h-3.5 w-3.5' />,
+      },
+      {
+        label: '连载中',
+        value: 'ongoing',
+        icon: <PenLine className='h-3.5 w-3.5' />,
+      },
+    ],
+    []
+  );
+
   const toggleShelf = async (item: MangaSearchItem) => {
     const key = `${item.sourceId}+${item.id}`;
     if (shelf[key]) {
@@ -273,7 +398,12 @@ export default function MangaRecommendPage() {
     setShelf((prev) => ({ ...prev, [key]: shelfItem }));
   };
 
-  const badge = recommendType === 'POPULAR' ? '热门' : '最新';
+  const badge = isLocalSource
+    ? recommendType === 'POPULAR'
+      ? '热门'
+      : '最新'
+    : browseOptions.find((option) => option.value === browseMode)?.label ||
+      '热门';
 
   // 首屏：书源还在路上，或已经有源但推荐请求还没落定——都还没到能断言"没有内容"的时候。
   const booting =
@@ -332,26 +462,71 @@ export default function MangaRecommendPage() {
               </button>
             ))}
           </div>
-          <div className='flex flex-nowrap gap-1 border-b border-library-edge dark:border-library-night-edge'>
-            {recommendOptions.map((option) => (
-              <button
-                key={option.value}
-                type='button'
-                onClick={() =>
-                  setRecommendType(option.value as MangaRecommendType)
-                }
-                aria-pressed={option.value === recommendType}
-                className={`${SPINE_TAB} inline-flex items-center gap-1.5 ${
-                  option.value === recommendType
-                    ? SPINE_TAB_ACTIVE
-                    : SPINE_TAB_IDLE
-                }`}
-              >
-                {option.icon}
-                {option.label}
-              </button>
-            ))}
-          </div>
+          {isLocalSource ? (
+            <div className='flex flex-nowrap gap-1 border-b border-library-edge dark:border-library-night-edge'>
+              {recommendOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type='button'
+                  onClick={() =>
+                    setRecommendType(option.value as MangaRecommendType)
+                  }
+                  aria-pressed={option.value === recommendType}
+                  className={`${SPINE_TAB} inline-flex items-center gap-1.5 ${
+                    option.value === recommendType
+                      ? SPINE_TAB_ACTIVE
+                      : SPINE_TAB_IDLE
+                  }`}
+                >
+                  {option.icon}
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <>
+              <div className='flex flex-nowrap gap-1 overflow-x-auto border-b border-library-edge [scrollbar-width:none] [&::-webkit-scrollbar]:hidden dark:border-library-night-edge'>
+                {browseOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type='button'
+                    onClick={() =>
+                      setBrowseMode(option.value as MangaBrowseMode)
+                    }
+                    aria-pressed={option.value === browseMode}
+                    className={`${SPINE_TAB} inline-flex items-center gap-1.5 ${
+                      option.value === browseMode
+                        ? SPINE_TAB_ACTIVE
+                        : SPINE_TAB_IDLE
+                    }`}
+                  >
+                    {option.icon}
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <div className='flex flex-wrap items-center gap-x-4 gap-y-2'>
+                <FilterSelect
+                  label='类型'
+                  value={filterType}
+                  options={MANGA_FILTER_TYPE_OPTIONS}
+                  onChange={setFilterType}
+                />
+                <FilterSelect
+                  label='地区'
+                  value={filterRegion}
+                  options={MANGA_FILTER_REGION_OPTIONS}
+                  onChange={setFilterRegion}
+                />
+                <FilterSelect
+                  label='年份'
+                  value={filterYear}
+                  options={MANGA_FILTER_YEAR_OPTIONS}
+                  onChange={setFilterYear}
+                />
+              </div>
+            </>
+          )}
         </section>
       ) : null}
 

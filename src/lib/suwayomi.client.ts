@@ -250,6 +250,27 @@ async function suwayomiFetch(
   return response;
 }
 
+/**
+ * 哪些 Suwayomi 错误值得重试：92 源的 Cloudflare 挑战是间歇性的，重试几次通常能过；
+ * 网络层失败与 5xx 也多为瞬时故障。GraphQL 校验类错误（4xx 风格）重试不会变好，不重试。
+ */
+function isRetryableSuwayomiError(error: Error): boolean {
+  const message = error.message || '';
+
+  if (/cloudflare/i.test(message)) {
+    return true;
+  }
+
+  const statusMatch = message.match(/请求失败: (\d{3})/);
+  if (statusMatch) {
+    return Number(statusMatch[1]) >= 500;
+  }
+
+  return /请求超时|fetch failed|network|econnreset|etimedout|socket|abort/i.test(
+    message
+  );
+}
+
 function normalizeMangaStatus(status?: string): string | undefined {
   if (!status) return undefined;
 
@@ -284,26 +305,46 @@ export class SuwayomiClient {
 
   private async graphqlRequest<T>(query: string, variables?: Record<string, any>, operationName?: string): Promise<T> {
     const resolved = await resolveSuwayomiConfig(this.options);
-    const response = await suwayomiFetch(resolved, resolved.serverUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ query, variables, operationName }),
-    });
 
-    if (!response.ok) {
-      throw new Error(`Suwayomi 请求失败: ${response.status}`);
+    // 92 源会间歇性抛 Cloudflare 挑战错误（详情/章节抓取最常见），有界重试几次通常就能过；
+    // 搜索/浏览/详情/页图都走这里，一并受益。校验类错误不重试，见 isRetryableSuwayomiError。
+    const maxAttempts = 3;
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const response = await suwayomiFetch(resolved, resolved.serverUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ query, variables, operationName }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Suwayomi 请求失败: ${response.status}`);
+        }
+
+        const data = (await response.json()) as GraphQLResponse<T>;
+        if (data.errors?.length) {
+          throw new Error(data.errors.map((item) => item.message || 'Unknown error').join('; '));
+        }
+        if (!data.data) {
+          throw new Error('Suwayomi 返回空数据');
+        }
+        return data.data;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (attempt >= maxAttempts || !isRetryableSuwayomiError(lastError)) {
+          throw lastError;
+        }
+        await new Promise((resolve) =>
+          setTimeout(resolve, attempt === 1 ? 1500 : 2000)
+        );
+      }
     }
 
-    const data = (await response.json()) as GraphQLResponse<T>;
-    if (data.errors?.length) {
-      throw new Error(data.errors.map((item) => item.message || 'Unknown error').join('; '));
-    }
-    if (!data.data) {
-      throw new Error('Suwayomi 返回空数据');
-    }
-    return data.data;
+    throw lastError ?? new Error('Suwayomi 请求失败');
   }
 
   async getSources(lang?: string): Promise<MangaSource[]> {
@@ -540,6 +581,92 @@ export class SuwayomiClient {
           type,
           source: sourceId,
           page,
+        },
+      },
+      'GET_SOURCE_MANGAS_FETCH'
+    );
+
+    return {
+      hasNextPage: Boolean(data.fetchSourceManga?.hasNextPage),
+      mangas: (data.fetchSourceManga?.mangas || []).map((manga) => ({
+        id: String(manga.id),
+        sourceId: String(manga.sourceId || sourceId),
+        sourceName: matchedSource?.displayName || matchedSource?.name || sourceId,
+        title: manga.title || '未命名漫画',
+        cover: buildSuwayomiImageProxyUrl(manga.thumbnailUrl || ''),
+        description: manga.description,
+        author: manga.author,
+        artist: manga.artist,
+        genre: manga.genre,
+        status: normalizeMangaStatus(manga.status),
+      })),
+    };
+  }
+
+  /**
+   * 按源自带的筛选定义浏览书库（SEARCH + 空关键词 + filters）。
+   * filters 的 position/selectState 与扩展的筛选列表一一对应，由调用方（API 层）
+   * 按模式与分类组装，这里只负责下发与结果映射，映射口径与 getRecommendedManga 一致。
+   */
+  async browseSourceManga(
+    sourceId: string,
+    filters: Array<{ position: number; selectState: number }>,
+    page = 1
+  ): Promise<MangaRecommendResult> {
+    if (!sourceId) {
+      return { mangas: [], hasNextPage: false };
+    }
+
+    const query = `
+      fragment MANGA_BASE_FIELDS on MangaType {
+        id
+        title
+        thumbnailUrl
+        sourceId
+        description
+        author
+        artist
+        genre
+        status
+      }
+
+      mutation GET_SOURCE_MANGAS_FETCH($input: FetchSourceMangaInput!) {
+        fetchSourceManga(input: $input) {
+          hasNextPage
+          mangas {
+            ...MANGA_BASE_FIELDS
+          }
+        }
+      }
+    `;
+
+    const sources = await this.getSources();
+    const matchedSource = sources.find((item) => item.id === sourceId);
+
+    const data = await this.graphqlRequest<{
+      fetchSourceManga?: {
+        hasNextPage?: boolean;
+        mangas?: Array<{
+          id: string | number;
+          title?: string;
+          thumbnailUrl?: string;
+          sourceId?: string | number;
+          description?: string;
+          author?: string;
+          artist?: string;
+          genre?: string;
+          status?: string;
+        }>;
+      };
+    }>(
+      query,
+      {
+        input: {
+          type: 'SEARCH',
+          source: sourceId,
+          query: '',
+          page,
+          filters,
         },
       },
       'GET_SOURCE_MANGAS_FETCH'
