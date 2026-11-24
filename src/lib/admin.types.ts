@@ -342,6 +342,12 @@ export interface AdminConfig {
     SourceIds?: string[]; // 限制可用源
     MaxSources?: number; // 搜索时最多查询多少个源
   };
+  Hm92Config?: {
+    Enabled: boolean; // 是否启用 92hm.top 桥接源
+    ServerURL: string; // 桥接服务地址
+    Username?: string; // 桥接 Basic Auth 用户名
+    Password?: string; // 桥接 Basic Auth 密码
+  };
   OPDSConfig?: {
     Enabled: boolean; // 是否启用电子书馆
     Sources?: Array<{
@@ -445,3 +451,4 @@ export interface AdminConfigResult {
   Role: 'owner' | 'admin';
   Config: AdminConfig;
 }
+
