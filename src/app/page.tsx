@@ -10,6 +10,7 @@ import {
   Link as LinkIcon,
   ListVideo,
   Music,
+  Scissors,
 } from 'lucide-react';
 import Link from 'next/link';
 import { Suspense, useEffect, useState } from 'react';
@@ -957,6 +958,20 @@ function HomeClient() {
                   </button>
                 </Link>
               )}
+
+              {/* 切片：外链到 videocelebs.net，新标签打开 */}
+              <a
+                href='https://videocelebs.net/'
+                target='_blank'
+                rel='noopener noreferrer'
+              >
+                <button
+                  className='p-1.5 rounded-lg text-rose-500 hover:text-rose-600 transition-colors'
+                  title='切片'
+                >
+                  <Scissors size={18} />
+                </button>
+              </a>
 
               {booksEnabled && (
                 <Link href='/books' prefetch={false}>
