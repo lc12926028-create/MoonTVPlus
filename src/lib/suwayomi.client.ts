@@ -326,7 +326,7 @@ export class SuwayomiClient {
     }>(query);
 
     const nodes = data.sources?.nodes || [];
-    const filtered = nodes.filter((item) => !lang || item.lang === lang);
+    const filtered = nodes.filter((item) => !lang || item.lang === lang || item.lang === 'localsourcelang');
     const scoped = resolved.sourceIds.length > 0
       ? filtered.filter((item) => resolved.sourceIds.includes(String(item.id)))
       : filtered;
