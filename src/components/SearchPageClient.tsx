@@ -51,6 +51,7 @@ import ProxyImage from '@/components/ProxyImage';
 import SearchResultFilter, {
   SearchFilterCategory,
 } from '@/components/SearchResultFilter';
+import { SearchHistoryPanel } from '@/components/SearchAssist';
 import SearchSuggestions from '@/components/SearchSuggestions';
 import VideoCard, { VideoCardHandle } from '@/components/VideoCard';
 import VirtualScrollableGrid from '@/components/VirtualScrollableGrid';
@@ -118,6 +119,8 @@ export function SearchPageClient({ searchBase = '/search' }: { searchBase?: stri
   const [showResults, setShowResults] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  // 影视 tab：聚焦且输入为空时，在搜索框下方弹出最近搜索历史面板
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const [totalSources, setTotalSources] = useState(0);
   const [completedSources, setCompletedSources] = useState(0);
@@ -1564,8 +1567,13 @@ export function SearchPageClient({ searchBase = '/search' }: { searchBase?: stri
 
     if (value.trim()) {
       setShowSuggestions(true);
+      setShowHistoryPanel(false);
     } else {
       setShowSuggestions(false);
+      // 清空输入后回到历史面板（仅影视 tab）
+      if (activeTab === 'video') {
+        setShowHistoryPanel(true);
+      }
     }
   };
 
@@ -1573,6 +1581,9 @@ export function SearchPageClient({ searchBase = '/search' }: { searchBase?: stri
   const handleInputFocus = () => {
     if (searchQuery.trim()) {
       setShowSuggestions(true);
+    } else if (activeTab === 'video') {
+      // 聚焦且输入为空：弹出最近搜索历史（仅影视 tab）
+      setShowHistoryPanel(true);
     }
   };
 
@@ -1600,6 +1611,7 @@ export function SearchPageClient({ searchBase = '/search' }: { searchBase?: stri
     setSearchQuery(trimmed);
     setShowResults(true);
     setShowSuggestions(false);
+    setShowHistoryPanel(false);
     // 立即设置加载状态，避免显示"未找到相关结果"
     setIsLoading(true);
 
@@ -1638,6 +1650,7 @@ export function SearchPageClient({ searchBase = '/search' }: { searchBase?: stri
 
     setSearchQuery(processedSuggestion);
     setShowSuggestions(false);
+    setShowHistoryPanel(false);
 
     // 自动执行搜索
     setShowResults(true);
@@ -1792,6 +1805,7 @@ export function SearchPageClient({ searchBase = '/search' }: { searchBase?: stri
   // 处理标签切换
   const handleTabChange = (newTab: 'video' | 'pansou' | 'acg') => {
     setActiveTab(newTab);
+    setShowHistoryPanel(false);
 
     // 如果有搜索关键词，更新 URL
     const currentQuery = searchParams.get('q');
@@ -1828,6 +1842,9 @@ export function SearchPageClient({ searchBase = '/search' }: { searchBase?: stri
                   onClick={() => {
                     setSearchQuery('');
                     setShowSuggestions(false);
+                    if (activeTab === 'video') {
+                      setShowHistoryPanel(true);
+                    }
                     document.getElementById('searchInput')?.focus();
                   }}
                   className='absolute right-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors dark:text-gray-500 dark:hover:text-gray-300'
@@ -1852,6 +1869,7 @@ export function SearchPageClient({ searchBase = '/search' }: { searchBase?: stri
                   setSearchQuery(trimmed);
                   setShowResults(true);
                   setShowSuggestions(false);
+                  setShowHistoryPanel(false);
                   router.push(
                     `${searchBase}?q=${encodeURIComponent(trimmed)}&type=${activeTab}`
                   );
@@ -1862,6 +1880,24 @@ export function SearchPageClient({ searchBase = '/search' }: { searchBase?: stri
                   }
                 }}
               />
+
+              {/* 搜索历史面板：仅影视 tab，聚焦且输入为空时弹出最近 10 条 */}
+              {showHistoryPanel &&
+                activeTab === 'video' &&
+                !searchQuery.trim() && (
+                  <SearchHistoryPanel
+                    history={searchHistory.slice(0, 10)}
+                    onSelect={(keyword) => {
+                      setShowHistoryPanel(false);
+                      handleSuggestionSelect(keyword);
+                    }}
+                    onClear={() => {
+                      clearSearchHistory();
+                      setShowHistoryPanel(false);
+                    }}
+                    onClose={() => setShowHistoryPanel(false)}
+                  />
+                )}
             </div>
           </form>
 

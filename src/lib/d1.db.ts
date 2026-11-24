@@ -2106,7 +2106,7 @@ export class D1Storage implements IStorage {
     try {
       const results = await this.db
         .prepare(
-          'SELECT keyword FROM search_history WHERE username = ? ORDER BY timestamp DESC LIMIT 20'
+          'SELECT keyword FROM search_history WHERE username = ? ORDER BY timestamp DESC LIMIT 10'
         )
         .bind(userName)
         .all();
@@ -2135,7 +2135,7 @@ export class D1Storage implements IStorage {
         .bind(userName, keyword, timestamp)
         .run();
 
-      // 保持最多 20 条记录
+      // 保持最多 10 条记录
       const countResult = await this.db
         .prepare(
           'SELECT COUNT(*) as count FROM search_history WHERE username = ?'
@@ -2144,7 +2144,7 @@ export class D1Storage implements IStorage {
         .first();
 
       const count = (countResult?.count as number) || 0;
-      if (count > 20) {
+      if (count > 10) {
         await this.db
           .prepare(
             `
@@ -2154,7 +2154,7 @@ export class D1Storage implements IStorage {
               SELECT id FROM search_history
               WHERE username = ?
               ORDER BY timestamp DESC
-              LIMIT 20
+              LIMIT 10
             )
           `
           )

@@ -12,8 +12,8 @@ interface SearchSuggestionsProps {
 
 interface SuggestionItem {
   text: string;
-  type: 'related';
-  icon?: React.ReactNode;
+  typeName?: string;
+  year?: string;
 }
 
 export default function SearchSuggestions({
@@ -49,12 +49,20 @@ export default function SearchSuggestions({
       );
       if (response.ok) {
         const data = await response.json();
-        const apiSuggestions = data.suggestions.map(
-          (item: { text: string }) => ({
-            text: item.text,
-            type: 'related' as const,
-          })
-        );
+        const apiSuggestions = (
+          data.suggestions as Array<{
+            title?: string;
+            text?: string;
+            type_name?: string;
+            year?: string;
+          }>
+        )
+          .map((item) => ({
+            text: (item.title || item.text || '').trim(),
+            typeName: item.type_name || undefined,
+            year: item.year ? String(item.year) : undefined,
+          }))
+          .filter((item) => item.text);
         setSuggestions(apiSuggestions);
       }
     } catch (err: unknown) {
@@ -152,13 +160,23 @@ export default function SearchSuggestions({
     >
       {suggestions.map((suggestion) => (
         <button
-          key={`related-${suggestion.text}`}
+          key={`title-${suggestion.text}`}
           onClick={() => onSelect(suggestion.text)}
           className="w-full px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150 flex items-center gap-3"
         >
           <span className='flex-1 text-sm text-gray-700 dark:text-gray-300 truncate'>
             {suggestion.text}
           </span>
+          {suggestion.year && (
+            <span className='shrink-0 text-xs text-gray-400 dark:text-gray-500'>
+              {suggestion.year}
+            </span>
+          )}
+          {suggestion.typeName && (
+            <span className='shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500 dark:bg-gray-700 dark:text-gray-400'>
+              {suggestion.typeName}
+            </span>
+          )}
         </button>
       ))}
     </div>

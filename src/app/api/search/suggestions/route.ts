@@ -52,78 +52,70 @@ export async function GET(request: NextRequest) {
 async function generateSuggestions(config: AdminConfig, query: string, username: string): Promise<
   Array<{
     text: string;
-    type: 'exact' | 'related' | 'suggestion';
+    title: string;
+    type_name?: string;
+    year?: string;
     score: number;
   }>
 > {
   const queryLower = query.toLowerCase();
 
   const apiSites = await getAvailableApiSites(username);
-  let realKeywords: string[] = [];
-
-  if (apiSites.length > 0) {
-    // 取第一个可用的数据源进行搜索
-    const firstSite = apiSites[0];
-    const results = await searchFromApi(firstSite, query);
-
-    realKeywords = Array.from(
-      new Set(
-        results
-          .filter((r: any) => config.SiteConfig.DisableYellowFilter || !yellowWords.some((word: string) => (r.type_name || '').includes(word)))
-          .map((r: any) => r.title)
-          .filter(Boolean)
-          .flatMap((title: string) => title.split(/[ -:：·、-]/))
-          .filter(
-            (w: string) => w.length > 1 && w.toLowerCase().includes(queryLower)
-          )
-      )
-    ).slice(0, 8);
+  if (apiSites.length === 0) {
+    return [];
   }
 
-  // 根据关键词与查询的匹配程度计算分数，并动态确定类型
-  const realSuggestions = realKeywords.map((word) => {
-    const wordLower = word.toLowerCase();
-    const queryWords = queryLower.split(/[ -:：·、-]/);
+  // 取第一个可用的数据源进行搜索，在其结果基础上提炼真实片名
+  const firstSite = apiSites[0];
+  const results = (await searchFromApi(firstSite, query)) as any[];
 
-    // 计算匹配分数：完全匹配得分更高
-    let score = 1.0;
-    if (wordLower === queryLower) {
-      score = 2.0; // 完全匹配
-    } else if (
-      wordLower.startsWith(queryLower) ||
-      wordLower.endsWith(queryLower)
+  // 按片名去重（不区分大小写），保留首次出现的类型 / 年份
+  const byTitle = new Map<
+    string,
+    { title: string; type_name?: string; year?: string; score: number }
+  >();
+
+  for (const r of results) {
+    if (
+      !config.SiteConfig.DisableYellowFilter &&
+      yellowWords.some((word: string) => (r.type_name || '').includes(word))
     ) {
-      score = 1.8; // 前缀或后缀匹配
-    } else if (queryWords.some((qw) => wordLower.includes(qw))) {
-      score = 1.5; // 包含查询词
+      continue;
     }
 
-    // 根据匹配程度确定类型
-    let type: 'exact' | 'related' | 'suggestion' = 'related';
-    if (score >= 2.0) {
-      type = 'exact';
-    } else if (score >= 1.5) {
-      type = 'related';
-    } else {
-      type = 'suggestion';
+    const title = typeof r.title === 'string' ? r.title.trim() : '';
+    if (!title) continue;
+
+    const key = title.toLowerCase();
+    if (byTitle.has(key)) continue;
+
+    // 匹配度：完全匹配 > 前缀匹配 > 包含查询词 > 其余结果
+    const titleLower = title.toLowerCase();
+    let score = 1.0;
+    if (titleLower === queryLower) {
+      score = 4.0;
+    } else if (titleLower.startsWith(queryLower)) {
+      score = 3.0;
+    } else if (titleLower.includes(queryLower)) {
+      score = 2.0;
     }
 
-    return {
-      text: word,
-      type,
+    byTitle.set(key, {
+      title,
+      type_name: r.type_name || undefined,
+      year: r.year ? String(r.year) : undefined,
       score,
-    };
-  });
+    });
+  }
 
-  // 按分数降序排列，相同分数按类型优先级排列
-  const sortedSuggestions = realSuggestions.sort((a, b) => {
-    if (a.score !== b.score) {
-      return b.score - a.score; // 分数高的在前
-    }
-    // 分数相同时，按类型优先级：exact > related > suggestion
-    const typePriority = { exact: 3, related: 2, suggestion: 1 };
-    return typePriority[b.type] - typePriority[a.type];
-  });
-
-  return sortedSuggestions;
+  return Array.from(byTitle.values())
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10)
+    .map((item) => ({
+      text: item.title, // 兼容旧字段：text 与 title 同为片名
+      title: item.title,
+      type_name: item.type_name,
+      year: item.year,
+      score: item.score,
+    }));
 }

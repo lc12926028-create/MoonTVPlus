@@ -15,7 +15,7 @@ import { userInfoCache } from './user-cache';
 import { dispatchNotificationChannels } from './notification-dispatch';
 
 // 搜索历史最大条数
-const SEARCH_HISTORY_LIMIT = 20;
+const SEARCH_HISTORY_LIMIT = 10;
 
 // 数据类型转换辅助函数
 function ensureString(value: any): string {

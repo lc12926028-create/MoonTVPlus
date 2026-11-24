@@ -34,6 +34,14 @@ import {
   LIBRARY_MUTED,
   LIBRARY_PANEL,
 } from '@/components/media/library';
+import {
+  clearLocalSearchHistory,
+  loadLocalSearchHistory,
+  pushLocalSearchHistory,
+  SearchHistoryPanel,
+  TitleSuggestionList,
+  type TitleSuggestionItem,
+} from '@/components/SearchAssist';
 import MediaCard from '@/components/media/MediaCard';
 import MediaGrid from '@/components/media/MediaGrid';
 import MediaGridSkeleton from '@/components/media/MediaGridSkeleton';
@@ -41,6 +49,8 @@ import MediaSectionHeader from '@/components/media/MediaSectionHeader';
 import ShelfChipButton from '@/components/media/ShelfChipButton';
 
 const MANGA_SEARCH_STATE_KEY = 'manga_search_state';
+// 漫画搜索历史单独存本机（与影视的账号历史分开），上限 10 条
+const MANGA_SEARCH_HISTORY_KEY = 'manga_search_history';
 
 export default function MangaSearchPage() {
   const router = useRouter();
@@ -67,6 +77,14 @@ export default function MangaSearchPage() {
   const [totalSources, setTotalSources] = useState(0);
   const [completedSources, setCompletedSources] = useState(0);
   const [useFluidSearch, setUseFluidSearch] = useState(true);
+  // 搜索历史面板 / 标题联想
+  const [searchHistory, setSearchHistory] = useState<string[]>([]);
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [titleSuggestions, setTitleSuggestions] = useState<
+    TitleSuggestionItem[]
+  >([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const getCacheKey = useCallback(
     (keyword: string, selectedSourceId: string) => {
@@ -199,6 +217,7 @@ export default function MangaSearchPage() {
   }, []);
 
   useEffect(() => {
+    setSearchHistory(loadLocalSearchHistory(MANGA_SEARCH_HISTORY_KEY));
     setUseFluidSearch(readFluidSearchSetting());
 
     fetch('/api/manga/sources')
@@ -224,6 +243,14 @@ export default function MangaSearchPage() {
     ) => {
       const trimmedQuery = keyword.trim();
       if (!trimmedQuery) return;
+
+      // 记入本地搜索历史，并收起历史面板 / 联想下拉
+      setSearchHistory(
+        pushLocalSearchHistory(MANGA_SEARCH_HISTORY_KEY, trimmedQuery)
+      );
+      setShowHistoryPanel(false);
+      setShowSuggestions(false);
+
       const normalizedSourceId = selectedSourceId || '';
       const searchKey = `${normalizedSourceId}::${trimmedQuery}`;
       const forceRefresh = options?.forceRefresh === true;
@@ -466,6 +493,73 @@ export default function MangaSearchPage() {
     }
   };
 
+  // 历史面板 / 联想下拉点选后：按指定关键词执行搜索
+  const runSearchWithKeyword = (keyword: string) => {
+    const trimmed = keyword.trim();
+    if (!trimmed) return;
+    setQuery(trimmed);
+    setShowSuggestions(false);
+    setShowHistoryPanel(false);
+
+    const params = new URLSearchParams({ q: trimmed });
+    if (sourceId) params.set('sourceId', sourceId);
+    const nextUrl = `/manga/search?${params.toString()}`;
+    if (urlQuery === trimmed && urlSourceId === sourceId) {
+      void performSearch(trimmed, sourceId, { forceRefresh: true });
+    } else {
+      forceNextUrlSearchRef.current = true;
+      router.replace(nextUrl);
+    }
+  };
+
+  // 输入联想：防抖后用现有漫画搜索接口提炼标题（去重、最多 10 条）
+  useEffect(() => {
+    const kw = query.trim();
+    if (!kw) {
+      setTitleSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams({ q: kw });
+      if (sourceId) params.set('sourceId', sourceId);
+      fetch(`/api/manga/search?${params.toString()}`, {
+        signal: controller.signal,
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          const items: TitleSuggestionItem[] = [];
+          const seen = new Set<string>();
+          for (const item of (data.results || []) as MangaSearchItem[]) {
+            const title = (item.title || '').trim();
+            if (!title || seen.has(title.toLowerCase())) continue;
+            seen.add(title.toLowerCase());
+            items.push({
+              title,
+              tag: item.genre || item.status || item.sourceName || undefined,
+            });
+            if (items.length >= 10) break;
+          }
+          setTitleSuggestions(items);
+          // 仅在输入框仍聚焦时才弹出，避免页面恢复状态时误弹
+          if (
+            searchInputRef.current &&
+            document.activeElement === searchInputRef.current
+          ) {
+            setShowSuggestions(items.length > 0);
+          }
+        })
+        .catch(() => undefined);
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query, sourceId]);
+
   const returnTo = useMemo(() => {
     const params = new URLSearchParams();
     if (lastSearchedQuery) params.set('q', lastSearchedQuery);
@@ -509,14 +603,66 @@ export default function MangaSearchPage() {
         onSubmit={handleSearch}
       >
         <div className='flex flex-col gap-3 lg:flex-row'>
-          <div className='flex-1'>
+          <div className='relative flex-1'>
             <input
+              ref={searchInputRef}
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setQuery(value);
+                if (value.trim()) {
+                  setShowHistoryPanel(false);
+                } else {
+                  setShowSuggestions(false);
+                  setShowHistoryPanel(true);
+                }
+              }}
+              onFocus={() => {
+                if (!query.trim()) {
+                  setShowHistoryPanel(true);
+                }
+              }}
               placeholder='搜索漫画标题'
               aria-label='搜索漫画标题'
+              autoComplete='off'
               className={LIBRARY_FIELD}
             />
+            {showHistoryPanel && !query.trim() && (
+              <SearchHistoryPanel
+                history={searchHistory}
+                onSelect={runSearchWithKeyword}
+                onClear={() => {
+                  clearLocalSearchHistory(MANGA_SEARCH_HISTORY_KEY);
+                  setSearchHistory([]);
+                  setShowHistoryPanel(false);
+                }}
+                onClose={() => setShowHistoryPanel(false)}
+                classNames={{
+                  panel:
+                    'mt-2 border-library-edge bg-library-card shadow-lg dark:border-library-night-edge dark:bg-library-night-card',
+                  header:
+                    'font-book text-library-ink dark:text-library-night-ink',
+                  clearButton:
+                    'text-library-muted hover:text-red-500 dark:text-library-night-muted dark:hover:text-red-400',
+                  chip: 'border border-library-edge bg-transparent px-3 py-1.5 text-xs text-library-ink hover:border-library-ochre hover:bg-library-ochre-tint hover:text-library-ochre dark:border-library-night-edge dark:bg-transparent dark:text-library-night-ink dark:hover:border-library-night-ochre dark:hover:bg-library-night-ochre-tint dark:hover:text-library-night-ochre',
+                }}
+              />
+            )}
+            {showSuggestions && query.trim() && (
+              <TitleSuggestionList
+                items={titleSuggestions}
+                onSelect={runSearchWithKeyword}
+                onClose={() => setShowSuggestions(false)}
+                classNames={{
+                  panel:
+                    'mt-2 border-library-edge bg-library-card shadow-lg dark:border-library-night-edge dark:bg-library-night-card',
+                  row: 'px-3 py-2.5 hover:bg-library-ochre-tint dark:hover:bg-library-night-ochre-tint',
+                  rowTitle: 'text-library-ink dark:text-library-night-ink',
+                  rowTag:
+                    'bg-library-ochre-tint text-library-ochre dark:bg-library-night-ochre-tint dark:text-library-night-ochre',
+                }}
+              />
+            )}
           </div>
           <select
             value={sourceId}

@@ -4,6 +4,14 @@ import { Play, RefreshCw, Search } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import {
+  clearLocalSearchHistory,
+  loadLocalSearchHistory,
+  pushLocalSearchHistory,
+  SearchHistoryPanel,
+  TitleSuggestionList,
+  type TitleSuggestionItem,
+} from '@/components/SearchAssist';
 import CoverCard from '@/components/music/CoverCard';
 import MusicEmpty, {
   MusicCardGridSkeleton,
@@ -64,6 +72,8 @@ type AlbumResult = {
 
 const HOT_SEARCH_CACHE_DURATION = 60 * 60 * 1000;
 const HOT_SEARCH_LIMIT = 20;
+// 音乐搜索历史单独存本机（与影视的账号历史分开），上限 10 条
+const MUSIC_SEARCH_HISTORY_KEY = 'music_search_history';
 
 /**
  * 搜索类型。标识方块用"曲 / 唱 / 碟"三个不同的字——两字母缩写在这里不成立
@@ -208,6 +218,14 @@ export default function MusicSearchPage() {
   const loadingMoreRef = useRef(false);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const userScrolledRef = useRef(false);
+  // 搜索历史面板 / 标题联想
+  const [musicHistory, setMusicHistory] = useState<string[]>([]);
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [titleSuggestions, setTitleSuggestions] = useState<
+    TitleSuggestionItem[]
+  >([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadHotSearch = async (forceRefresh = false) => {
     const cacheKey = getHotSearchCacheKey(source);
@@ -344,6 +362,90 @@ export default function MusicSearchPage() {
     userScrolledRef.current = false;
   }, [source, q, searchType]);
 
+  // 搜索历史：挂载时载入；每次真正执行搜索（q 变化）后把关键词置顶记入
+  useEffect(() => {
+    setMusicHistory(loadLocalSearchHistory(MUSIC_SEARCH_HISTORY_KEY));
+  }, []);
+
+  useEffect(() => {
+    if (q) {
+      setMusicHistory(pushLocalSearchHistory(MUSIC_SEARCH_HISTORY_KEY, q));
+    }
+  }, [q]);
+
+  // 输入联想：防抖后用现有音乐搜索接口提炼标题（去重、最多 10 条）
+  useEffect(() => {
+    const kw = keyword.trim();
+    if (!kw) {
+      setTitleSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      fetch(
+        `/api/music/v2/search?source=${selectedSource}&q=${encodeURIComponent(
+          kw
+        )}&type=${selectedType}&page=1&limit=10`,
+        { signal: controller.signal }
+      )
+        .then((res) => res.json())
+        .then((data) => {
+          const list = (data.data?.list || []) as any[];
+          const items: TitleSuggestionItem[] = [];
+          const seen = new Set<string>();
+          for (const raw of list) {
+            let title = '';
+            let tag: string | undefined;
+            if (selectedType === 'singer') {
+              title = String(raw.name || '').trim();
+              tag = '歌手';
+            } else if (selectedType === 'album') {
+              title = String(raw.name || '').trim();
+              tag = raw.artistName || '专辑';
+            } else {
+              const song = mapSong(raw);
+              title = (song.name || '').trim();
+              tag = song.artist || undefined;
+            }
+            if (!title || seen.has(title.toLowerCase())) continue;
+            seen.add(title.toLowerCase());
+            items.push({ title, tag });
+            if (items.length >= 10) break;
+          }
+          setTitleSuggestions(items);
+          // 仅在输入框仍聚焦时才弹出，避免切换音源 / 类型时误弹
+          if (
+            searchInputRef.current &&
+            document.activeElement === searchInputRef.current
+          ) {
+            setShowSuggestions(items.length > 0);
+          }
+        })
+        .catch(() => undefined);
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [keyword, selectedSource, selectedType]);
+
+  // 历史面板 / 联想下拉点选后：按指定关键词执行搜索
+  const selectSuggestion = (title: string) => {
+    const next = title.trim();
+    if (!next) return;
+    setKeyword(next);
+    setShowSuggestions(false);
+    setShowHistoryPanel(false);
+    router.push(
+      `/music/search?source=${selectedSource}&type=${selectedType}&q=${encodeURIComponent(
+        next
+      )}`
+    );
+  };
+
   useEffect(() => {
     if (!q || detailTitle || !hasMore) return;
     const target = loadMoreRef.current;
@@ -379,6 +481,8 @@ export default function MusicSearchPage() {
 
   const submit = () => {
     const next = keyword.trim();
+    setShowSuggestions(false);
+    setShowHistoryPanel(false);
     if (next) router.push(`/music/search?source=${selectedSource}&type=${selectedType}&q=${encodeURIComponent(next)}`);
   };
 
@@ -507,25 +611,79 @@ export default function MusicSearchPage() {
     >
       {/* 搜索框单独占一行：它和右边的两个下拉各自都要够宽才不至于被压变形，
           挤在同一行里三样都会变小。用 form 而不是 onKeyDown，手机键盘上才有"前往"。 */}
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit();
-        }}
-        className={cn(MUSIC_FIELD, 'mb-6')}
-      >
-        <Search
-          className='h-4 w-4 shrink-0 text-music-muted dark:text-music-night-muted'
-          strokeWidth={2}
-        />
-        <input
-          value={keyword}
-          onChange={(event) => setKeyword(event.target.value)}
-          className={MUSIC_FIELD_INPUT}
-          placeholder='搜索歌曲、歌手或专辑…'
-          aria-label='搜索'
-        />
-      </form>
+      <div className='relative mb-6'>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+          className={MUSIC_FIELD}
+        >
+          <Search
+            className='h-4 w-4 shrink-0 text-music-muted dark:text-music-night-muted'
+            strokeWidth={2}
+          />
+          <input
+            ref={searchInputRef}
+            value={keyword}
+            onChange={(event) => {
+              const value = event.target.value;
+              setKeyword(value);
+              if (value.trim()) {
+                setShowHistoryPanel(false);
+              } else {
+                setShowSuggestions(false);
+                setShowHistoryPanel(true);
+              }
+            }}
+            onFocus={() => {
+              if (!keyword.trim()) {
+                setShowHistoryPanel(true);
+              }
+            }}
+            className={MUSIC_FIELD_INPUT}
+            placeholder='搜索歌曲、歌手或专辑…'
+            aria-label='搜索'
+            autoComplete='off'
+          />
+        </form>
+
+        {showHistoryPanel && !keyword.trim() && (
+          <SearchHistoryPanel
+            history={musicHistory}
+            onSelect={selectSuggestion}
+            onClear={() => {
+              clearLocalSearchHistory(MUSIC_SEARCH_HISTORY_KEY);
+              setMusicHistory([]);
+              setShowHistoryPanel(false);
+            }}
+            onClose={() => setShowHistoryPanel(false)}
+            classNames={{
+              panel:
+                'mt-2 border-music-edge bg-music-card shadow-xl dark:border-music-night-edge dark:bg-music-night-card',
+              header: 'text-music-ink dark:text-music-night-ink',
+              clearButton:
+                'text-music-muted hover:text-red-500 dark:text-music-night-muted dark:hover:text-red-400',
+              chip: 'bg-black/5 px-3 py-1.5 text-xs text-music-ink hover:bg-black/10 dark:bg-white/10 dark:text-music-night-ink dark:hover:bg-white/20',
+            }}
+          />
+        )}
+        {showSuggestions && keyword.trim() && (
+          <TitleSuggestionList
+            items={titleSuggestions}
+            onSelect={selectSuggestion}
+            onClose={() => setShowSuggestions(false)}
+            classNames={{
+              panel:
+                'mt-2 border-music-edge bg-music-card shadow-xl dark:border-music-night-edge dark:bg-music-night-card',
+              row: 'px-3 py-2.5 hover:bg-black/5 dark:hover:bg-white/5',
+              rowTitle: 'text-music-ink dark:text-music-night-ink',
+              rowTag:
+                'bg-black/5 text-music-muted dark:bg-white/10 dark:text-music-night-muted',
+            }}
+          />
+        )}
+      </div>
 
       {loading ? (
         selectedType === 'song' || detailTitle ? (
