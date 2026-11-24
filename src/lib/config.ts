@@ -931,6 +931,27 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
     adminConfig.SuwayomiConfig.MaxSources = 10;
   }
 
+  if (!adminConfig.Hm92Config) {
+    adminConfig.Hm92Config = {
+      Enabled: process.env.HM92_ENABLED === 'true',
+      ServerURL: process.env.HM92_URL || '',
+      Username: process.env.HM92_USERNAME || '',
+      Password: process.env.HM92_PASSWORD || '',
+    };
+  }
+  if (adminConfig.Hm92Config.Enabled === undefined) {
+    adminConfig.Hm92Config.Enabled = false;
+  }
+  if (adminConfig.Hm92Config.ServerURL === undefined) {
+    adminConfig.Hm92Config.ServerURL = '';
+  }
+  if (adminConfig.Hm92Config.Username === undefined) {
+    adminConfig.Hm92Config.Username = '';
+  }
+  if (adminConfig.Hm92Config.Password === undefined) {
+    adminConfig.Hm92Config.Password = '';
+  }
+
   if (!adminConfig.OPDSConfig) {
     adminConfig.OPDSConfig = {
       Enabled: process.env.OPDS_ENABLED === 'true',
@@ -1342,3 +1363,4 @@ export async function clearConfigCache() {
   cachedConfig = null as any;
   configInitPromise = null;
 }
+
