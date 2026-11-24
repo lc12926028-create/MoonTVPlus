@@ -313,11 +313,14 @@ export default function MangaReadPage() {
 
   useEffect(() => {
     if (!chapterId) return;
-    fetch(`/api/manga/pages?chapterId=${encodeURIComponent(chapterId)}`)
+    // 带上 sourceId：92hm.top 桥接源的章节要在后端按源分发，其余源后端忽略此参数
+    const params = new URLSearchParams({ chapterId });
+    if (sourceId) params.set('sourceId', sourceId);
+    fetch(`/api/manga/pages?${params.toString()}`)
       .then((res) => res.json())
       .then((data) => setPages(data.pages || []))
       .catch(() => setPages([]));
-  }, [chapterId]);
+  }, [chapterId, sourceId]);
 
   useEffect(() => {
     if (!mangaId || !sourceId) return;
