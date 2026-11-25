@@ -529,12 +529,6 @@ export default function MangaRecommendPage() {
                   options={MANGA_FILTER_REGION_OPTIONS}
                   onChange={setFilterRegion}
                 />
-                <FilterSelect
-                  label='年份'
-                  value={filterYear}
-                  options={MANGA_FILTER_YEAR_OPTIONS}
-                  onChange={setFilterYear}
-                />
               </div>
             </>
           )}
