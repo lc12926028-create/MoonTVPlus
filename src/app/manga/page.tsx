@@ -236,10 +236,11 @@ export default function MangaRecommendPage() {
 
   // 本地源（id 为 '0'）没有源筛选，保持原来的热门/最新推荐口径。
   const isLocalSource = sourceId === '0';
-  // 92hm.top 桥接源同样只有热门/最新两个列表：页签与本地源一致，
-  // 数据走 /api/manga/browse 的桥接分支（热门=排行、最新=更新）。
+  // 92hm.top 桥接源走 /api/manga/browse 的桥接分支：热门=排行、最新=更新、
+  // 已完结=booklist?end=1、连载中=booklist?end=0；只有本地源用热门/最新页签，
+  // 桥接源与其它 Suwayomi 源一样用四页签（类型/地区下拉对桥接源不适用，不渲染）。
   const isHm92Source = sourceId === 'hm92top';
-  const usesRecommendTabs = isLocalSource || isHm92Source;
+  const usesRecommendTabs = isLocalSource;
 
   const fetchRecommend = useCallback(
     async (nextPage: number, append: boolean) => {
@@ -262,7 +263,7 @@ export default function MangaRecommendPage() {
           : isHm92Source
           ? `/api/manga/browse?${new URLSearchParams({
               sourceId,
-              mode: recommendType === 'LATEST' ? 'latest' : 'popular',
+              mode: browseMode,
               page: String(nextPage),
             }).toString()}`
           : `/api/manga/browse?${new URLSearchParams({
@@ -516,20 +517,22 @@ export default function MangaRecommendPage() {
                   </button>
                 ))}
               </div>
-              <div className='flex flex-wrap items-center gap-x-4 gap-y-2'>
-                <FilterSelect
-                  label='类型'
-                  value={filterType}
-                  options={MANGA_FILTER_TYPE_OPTIONS}
-                  onChange={setFilterType}
-                />
-                <FilterSelect
-                  label='地区'
-                  value={filterRegion}
-                  options={MANGA_FILTER_REGION_OPTIONS}
-                  onChange={setFilterRegion}
-                />
-              </div>
+              {!isHm92Source ? (
+                <div className='flex flex-wrap items-center gap-x-4 gap-y-2'>
+                  <FilterSelect
+                    label='类型'
+                    value={filterType}
+                    options={MANGA_FILTER_TYPE_OPTIONS}
+                    onChange={setFilterType}
+                  />
+                  <FilterSelect
+                    label='地区'
+                    value={filterRegion}
+                    options={MANGA_FILTER_REGION_OPTIONS}
+                    onChange={setFilterRegion}
+                  />
+                </div>
+              ) : null}
             </>
           )}
         </section>

@@ -48,8 +48,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ results: [], hasNextPage: false });
     }
 
-    // 92hm.top 桥接源只有热门（排行）/最新（更新）两个列表，分类筛选与进度模式不适用，
-    // completed/ongoing 一律回落到热门，与前端只展示热门/最新页签保持一致。
+    // 92hm.top 桥接源：热门（排行）/最新（更新）/已完结（booklist?end=1）/
+    // 连载中（booklist?end=0），分类筛选不适用。
     if (sourceId === HM92_SOURCE_ID) {
       const bridgeResult = await hm92Client.browseManga(mode, page);
       return NextResponse.json({

@@ -192,12 +192,22 @@ export class Hm92Client {
     return (data.results || []).map((item) => this.mapListItem(item));
   }
 
-  /** 书库浏览：popular → 桥接排行（rank），latest → 桥接更新（update）。 */
+  /**
+   * 书库浏览：popular → 桥接排行（rank），latest → 桥接更新（update），
+   * completed → 桥接已完结（booklist?end=1），ongoing → 桥接连载中（booklist?end=0）。
+   */
   async browseManga(
     mode: 'popular' | 'latest' | 'completed' | 'ongoing',
     page = 1
   ): Promise<MangaRecommendResult> {
-    const list = mode === 'latest' ? 'update' : 'rank';
+    const list =
+      mode === 'latest'
+        ? 'update'
+        : mode === 'completed'
+        ? 'completed'
+        : mode === 'ongoing'
+        ? 'ongoing'
+        : 'rank';
     const data = await this.request<Hm92ListResponse>(
       `/api/browse?list=${list}&page=${page}`
     );
