@@ -973,6 +973,29 @@ function HomeClient() {
                 </button>
               </a>
 
+              {/* Netflix：外链到 netflix.com，新标签打开 */}
+              <a
+                href='https://www.netflix.com/'
+                target='_blank'
+                rel='noopener noreferrer'
+              >
+                <button
+                  className='p-1.5 rounded-lg transition-opacity hover:opacity-80'
+                  title='Netflix'
+                >
+                  <span
+                    className='flex items-center justify-center rounded-[4px] text-[13px] font-black leading-none text-white'
+                    style={{
+                      width: 18,
+                      height: 18,
+                      backgroundColor: '#E50914',
+                    }}
+                  >
+                    N
+                  </span>
+                </button>
+              </a>
+
               {booksEnabled && (
                 <Link href='/books' prefetch={false}>
                   <button
