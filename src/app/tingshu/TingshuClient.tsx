@@ -107,18 +107,32 @@ function formatChapterDuration(seconds: number): string {
 }
 
 async function apiGet<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  const data = (await res.json()) as {
+  // 先拿响应再解析：服务端出错时正文可能不是 JSON（例如中间件返回的纯文本
+  // Unauthorized），直接 res.json() 会抛解析错误，把友好提示吞掉。
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch {
+    throw new Error('网络请求失败，请点一下重试');
+  }
+  let data: {
     code?: number;
     data?: T;
     error?: string;
     retryable?: boolean;
-  };
-  if (!res.ok || data.code !== 0) {
-    const err = new Error(data.error || '请求失败，请点一下重试') as Error & {
+  } | null = null;
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    data = null;
+  }
+  if (!res.ok || !data || data.code !== 0) {
+    const err = new Error(
+      (data && data.error) || '请求失败，请点一下重试'
+    ) as Error & {
       retryable?: boolean;
     };
-    err.retryable = data.retryable !== false;
+    err.retryable = !data || data.retryable !== false;
     throw err;
   }
   return data.data as T;
@@ -220,6 +234,11 @@ export default function TingshuClient() {
         setTab('home');
       } catch (e) {
         setSearchError((e as Error).message || '搜索失败，请点一下重试');
+        // 失败也要切到结果页，否则报错条（只在结果页渲染）永远看不到，
+        // 用户只会看到一片空白。
+        setLastQuery(keyword);
+        setView('results');
+        setTab('home');
       } finally {
         setSearching(false);
       }
