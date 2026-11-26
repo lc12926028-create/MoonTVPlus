@@ -65,6 +65,14 @@ interface LastPlay {
   at: number;
 }
 
+// B 站接口返回的信封格式：{ code, data, error, retryable }
+interface BiliApiEnvelope<T> {
+  code?: number;
+  data?: T;
+  error?: string;
+  retryable?: boolean;
+}
+
 const SHELF_KEY = 'tingshu-bookshelf-v1';
 const LAST_PLAY_KEY = 'tingshu-last-play-v1';
 
@@ -115,14 +123,9 @@ async function apiGet<T>(url: string): Promise<T> {
   } catch {
     throw new Error('网络请求失败，请点一下重试');
   }
-  let data: {
-    code?: number;
-    data?: T;
-    error?: string;
-    retryable?: boolean;
-  } | null = null;
+  let data: BiliApiEnvelope<T> | null = null;
   try {
-    data = (await res.json()) as typeof data;
+    data = (await res.json()) as BiliApiEnvelope<T>;
   } catch {
     data = null;
   }
