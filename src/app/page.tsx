@@ -12,6 +12,7 @@ import {
   ListVideo,
   Music,
   Scissors,
+  Spade,
 } from 'lucide-react';
 import Link from 'next/link';
 import { Suspense, useEffect, useState } from 'react';
@@ -1003,6 +1004,20 @@ function HomeClient() {
                   >
                     N
                   </span>
+                </button>
+              </a>
+
+              {/* 掼蛋：外链到腾讯会议回放（戴长胜掼蛋课），新标签打开 */}
+              <a
+                href='https://meeting.tencent.com/rs/2qDLWjAK45'
+                target='_blank'
+                rel='noopener noreferrer'
+              >
+                <button
+                  className='p-1.5 rounded-lg text-orange-500 hover:text-orange-600 transition-colors'
+                  title='掼蛋'
+                >
+                  <Spade size={18} />
                 </button>
               </a>
 
