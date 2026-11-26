@@ -134,6 +134,8 @@ export default async function RootLayout({
   let analyticsWebsiteId = '';
   let analyticsCustomScript = '';
   let musicFeatureEnabled = false;
+  // 听书功能默认开启；站长可在后台关闭（TingshuConfig 进 D1 后由配置决定）。
+  let tingshuFeatureEnabled = true;
   let suwayomiEnabled = false;
   let booksEnabled =
     process.env.OPDS_ENABLED === 'true' ||
@@ -250,6 +252,13 @@ export default async function RootLayout({
     // 音乐功能配置
     musicFeatureEnabled = config.MusicConfig?.Enabled || false;
     musicProxyEnabled = config.MusicConfig?.ProxyEnabled ?? true;
+    // 听书功能配置（TingshuConfig 尚未进 AdminConfig 类型，先宽松读取；默认开启）
+    tingshuFeatureEnabled =
+      (
+        config as unknown as {
+          TingshuConfig?: { Enabled?: boolean };
+        }
+      ).TingshuConfig?.Enabled ?? true;
     // 漫画功能配置
     suwayomiEnabled = !!(
       config.SuwayomiConfig?.Enabled && config.SuwayomiConfig?.ServerURL
@@ -361,6 +370,7 @@ export default async function RootLayout({
     MUSIC_PROXY_ENABLED: musicProxyEnabled,
     SUWAYOMI_ENABLED: suwayomiEnabled && userFeatureAccess.manga,
     BOOKS_ENABLED: booksEnabled && userFeatureAccess.books,
+    TINGSHU_ENABLED: tingshuFeatureEnabled && userFeatureAccess.tingshu,
     NETDISK_SEARCH_ENABLED: userFeatureAccess.netdisk_search,
     MAGNET_SEARCH_ENABLED: userFeatureAccess.magnet_search,
     MAGNET_SAVE_PRIVATE_LIBRARY_ENABLED:

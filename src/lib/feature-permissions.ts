@@ -13,6 +13,7 @@ export const FEATURE_PERMISSION_OPTIONS = [
   { key: 'music', label: '音乐', description: '音乐视听功能' },
   { key: 'manga', label: '漫画展馆', description: '漫画搜索、阅读与书架' },
   { key: 'books', label: '电子书馆', description: 'OPDS 电子书浏览、阅读与书架' },
+  { key: 'tingshu', label: '听书', description: '听书功能：B 站有声书搜索、收听与书架' },
 ] as const;
 
 export type FeaturePermissionKey = (typeof FEATURE_PERMISSION_OPTIONS)[number]['key'];

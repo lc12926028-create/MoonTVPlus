@@ -7,6 +7,7 @@ import {
   BookOpen,
   Bot,
   ChevronRight,
+  Headphones,
   Link as LinkIcon,
   ListVideo,
   Music,
@@ -80,6 +81,7 @@ function HomeClient() {
   const [musicEnabled, setMusicEnabled] = useState(false);
   const [mangaEnabled, setMangaEnabled] = useState(false);
   const [booksEnabled, setBooksEnabled] = useState(false);
+  const [tingshuEnabled, setTingshuEnabled] = useState(false);
   const [netdiskTempPlayEnabled, setNetdiskTempPlayEnabled] = useState(false);
   const [showDirectPlayDialog, setShowDirectPlayDialog] = useState(false);
   const [directPlayUrl, setDirectPlayUrl] = useState('');
@@ -367,6 +369,14 @@ function HomeClient() {
     if (typeof window !== 'undefined') {
       const enabled = !!(window as any).RUNTIME_CONFIG?.BOOKS_ENABLED;
       setBooksEnabled(enabled);
+    }
+  }, []);
+
+  // 检查听书功能是否启用
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const enabled = !!(window as any).RUNTIME_CONFIG?.TINGSHU_ENABLED;
+      setTingshuEnabled(enabled);
     }
   }, []);
 
@@ -1003,6 +1013,17 @@ function HomeClient() {
                     title='电子书馆'
                   >
                     <BookMarked size={18} />
+                  </button>
+                </Link>
+              )}
+
+              {tingshuEnabled && (
+                <Link href='/tingshu' prefetch={false}>
+                  <button
+                    className='p-1.5 rounded-lg text-purple-500 hover:text-purple-600 transition-colors'
+                    title='听书'
+                  >
+                    <Headphones size={18} />
                   </button>
                 </Link>
               )}
